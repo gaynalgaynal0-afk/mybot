@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, session, jsonify
@@ -18,20 +19,45 @@ bot = telebot.TeleBot(BOT_TOKEN, skip_pending=True)
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
-# ── Database ──────────────────────────────────────────────────────────────────
-db = {
-    "users": {},
-    "blocked": set(),
-    "sig_hidden": set(),      # users who have signature REMOVED
-    "signature": " \n ★ upload method ★ TG: @jv_60fps ",  # default sig
-    "broadcast_log": [],
-    "stats": {
-        "total_starts": 0,
-        "total_verifications": 0,
-        "total_denied": 0,
-        "total_verify_calls": 0,
+DATA_FILE = "data.json"
+
+# ── Persistent storage ────────────────────────────────────────────────────────
+def load_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                d = json.load(f)
+                d["blocked"]    = set(d.get("blocked", []))
+                d["sig_hidden"] = set(d.get("sig_hidden", []))
+                return d
+        except:
+            pass
+    return {
+        "users": {},
+        "blocked": set(),
+        "sig_hidden": set(),
+        "sig_enabled_global": True,   # global ON/OFF switch
+        "signature": " \n ★ upload method ★ TG: @jv_60fps ",
+        "broadcast_log": [],
+        "stats": {
+            "total_starts": 0,
+            "total_verifications": 0,
+            "total_denied": 0,
+            "total_verify_calls": 0,
+        }
     }
-}
+
+def save_data():
+    try:
+        d = dict(db)
+        d["blocked"]    = list(db["blocked"])
+        d["sig_hidden"] = list(db["sig_hidden"])
+        with open(DATA_FILE, "w") as f:
+            json.dump(d, f)
+    except:
+        pass
+
+db = load_data()
 
 def save_user(user, verified=False):
     uid = str(user.id)
@@ -49,8 +75,9 @@ def save_user(user, verified=False):
         db["users"][uid]["verified"] = True
         db["users"][uid]["api_calls"] += 1
         db["users"][uid]["last_seen"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    save_data()
 
-# ── API: Verify user ──────────────────────────────────────────────────────────
+# ── API: Verify ───────────────────────────────────────────────────────────────
 @app.route("/verify/<uid>")
 def verify_user(uid):
     db["stats"]["total_verify_calls"] += 1
@@ -74,12 +101,16 @@ def verify_user(uid):
 # ── API: Signature ─────────────────────────────────────────────────────────────
 @app.route("/signature/<uid>")
 def get_signature(uid):
-    """Extension calls this to get signature text + whether it's enabled for this user."""
+    # Global OFF → no signature for anyone
+    if not db.get("sig_enabled_global", True):
+        return jsonify({"text": "", "enabled": False})
+    # Per-user removed
     if uid in db["sig_hidden"]:
         return jsonify({"text": "", "enabled": False})
+    # Show signature
     return jsonify({"text": db["signature"], "enabled": True})
 
-# ── Telegram Handlers ──────────────────────────────────────────────────────────
+# ── Telegram ──────────────────────────────────────────────────────────────────
 def is_member(uid):
     try:
         m = bot.get_chat_member(CHANNEL_ID, uid)
@@ -143,9 +174,10 @@ def tg_broadcast(m):
             bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown"); sent += 1
         except: pass
     db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
+    save_data()
     bot.send_message(m.chat.id, f"✅ Sent to {sent} users.")
 
-# ── Admin Panel HTML ──────────────────────────────────────────────────────────
+# ── Admin HTML ────────────────────────────────────────────────────────────────
 ADMIN_HTML = """
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -179,6 +211,7 @@ tr:hover td{background:#243347}
 .btn-green{background:#22c55e;color:#fff}
 .btn-purple{background:#8b5cf6;color:#fff}
 .btn-blue{background:#3b82f6;color:#fff}
+.btn-orange{background:#f97316;color:#fff}
 textarea,input[type=text],input[type=password]{background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:8px;padding:10px 14px;font-size:.88rem;width:100%}
 .section-box{background:#1e293b;border-radius:12px;padding:20px;border:1px solid #334155;margin-bottom:20px}
 .section-box textarea{height:80px;resize:vertical;margin:10px 0}
@@ -192,6 +225,9 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
 .log-time{color:#64748b;font-size:.75rem}
 .sig-preview{background:#0f172a;border:1px solid #00e5ff33;border-radius:8px;padding:12px 16px;font-size:.85rem;color:#00e5ff;font-family:monospace;margin-top:8px;word-break:break-all}
 .section-title{font-size:.9rem;font-weight:700;margin-bottom:12px;color:#cbd5e1}
+.global-toggle{display:flex;align-items:center;gap:16px;background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px 18px;margin-bottom:20px}
+.toggle-status-on{color:#22c55e;font-weight:700;font-size:.95rem}
+.toggle-status-off{color:#ef4444;font-weight:700;font-size:.95rem}
 </style></head><body>
 {% if not session.get('admin') %}
 <div class="login-box">
@@ -241,11 +277,8 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
       <tbody>
         {% for uid, u in users.items() %}
         <tr>
-          <td>{{ uid }}</td>
-          <td>{{ u.name }}</td>
-          <td>@{{ u.username }}</td>
-          <td>{{ u.joined_at }}</td>
-          <td>{{ u.last_seen }}</td>
+          <td>{{ uid }}</td><td>{{ u.name }}</td><td>@{{ u.username }}</td>
+          <td>{{ u.joined_at }}</td><td>{{ u.last_seen }}</td>
           <td>
             {% if uid in blocked %}<span class="badge blocked">🚫 Blocked</span>
             {% elif uid in sig_hidden %}<span class="badge sig-off">✍️ No Sig</span>
@@ -255,21 +288,17 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
           <td>
             {% if uid in blocked %}
               <form method="POST" action="/admin/unblock/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-green">✅ Unblock</button>
-              </form>
+                <button class="action-btn btn-green">✅ Unblock</button></form>
             {% else %}
               <form method="POST" action="/admin/block/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-red">🚫 Block</button>
-              </form>
+                <button class="action-btn btn-red">🚫 Block</button></form>
             {% endif %}
             {% if uid in sig_hidden %}
               <form method="POST" action="/admin/sig/show/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-blue">👁 Show Sig</button>
-              </form>
+                <button class="action-btn btn-blue">👁 Show Sig</button></form>
             {% else %}
               <form method="POST" action="/admin/sig/remove/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-purple">✍️ Remove Sig</button>
-              </form>
+                <button class="action-btn btn-purple">✍️ Remove Sig</button></form>
             {% endif %}
           </td>
         </tr>
@@ -278,54 +307,64 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
     </table>
 
   {% elif page == 'signature' %}
+    <div class="global-toggle">
+      <span style="font-size:.9rem;color:#94a3b8">Global Signature:</span>
+      {% if sig_global %}
+        <span class="toggle-status-on">✅ ON — showing to all users</span>
+        <form method="POST" action="/admin/sig/global/off" style="margin-left:auto">
+          <button class="action-btn btn-red" style="padding:8px 18px">🔴 Turn OFF for Everyone</button>
+        </form>
+      {% else %}
+        <span class="toggle-status-off">🔴 OFF — hidden for all users</span>
+        <form method="POST" action="/admin/sig/global/on" style="margin-left:auto">
+          <button class="action-btn btn-green" style="padding:8px 18px">✅ Turn ON for Everyone</button>
+        </form>
+      {% endif %}
+    </div>
     <div class="section-box">
-      <div class="section-title">✍️ Current Signature Text</div>
-      <p style="font-size:.82rem;color:#94a3b8;margin-bottom:8px">This text is automatically added to every TikTok upload. Users cannot see or edit it.</p>
+      <div class="section-title">✍️ Current Signature</div>
       <div class="sig-preview">{{ signature }}</div>
     </div>
     <div class="section-box">
-      <div class="section-title">✏️ Update Signature</div>
+      <div class="section-title">✏️ Update Signature Text</div>
       <form method="POST" action="/admin/signature/update">
-        <textarea name="sig" placeholder="Enter new signature text...">{{ signature }}</textarea>
-        <button class="submit-btn">💾 Save Signature</button>
+        <textarea name="sig">{{ signature }}</textarea>
+        <button class="submit-btn">💾 Save</button>
       </form>
     </div>
     <div class="section-box">
-      <div class="section-title">🚫 Remove Sig From Specific User</div>
+      <div class="section-title">👤 Remove Sig From One User</div>
       <form method="POST" action="/admin/sig/remove-manual">
-        <input type="text" name="uid" placeholder="Enter Telegram User ID" style="margin-bottom:10px">
-        <button class="action-btn btn-purple" style="padding:10px 18px">✍️ Remove Signature</button>
+        <input type="text" name="uid" placeholder="Telegram User ID" style="margin-bottom:10px">
+        <button class="action-btn btn-purple" style="padding:10px 18px">✍️ Remove</button>
       </form>
     </div>
     <div class="section-box">
-      <div class="section-title">👁 Show Sig For Specific User</div>
+      <div class="section-title">👤 Restore Sig For One User</div>
       <form method="POST" action="/admin/sig/show-manual">
-        <input type="text" name="uid" placeholder="Enter Telegram User ID" style="margin-bottom:10px">
-        <button class="action-btn btn-blue" style="padding:10px 18px">👁 Show Signature</button>
+        <input type="text" name="uid" placeholder="Telegram User ID" style="margin-bottom:10px">
+        <button class="action-btn btn-blue" style="padding:10px 18px">👁 Restore</button>
       </form>
     </div>
     <div class="section-box">
       <div class="section-title">📋 Users With Signature Removed ({{ sig_hidden|length }})</div>
-      {% if not sig_hidden %}
-        <p style="color:#64748b;font-size:.85rem">No users have signature removed.</p>
-      {% endif %}
+      {% if not sig_hidden %}<p style="color:#64748b;font-size:.85rem">None.</p>{% endif %}
       {% for uid in sig_hidden %}
         <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid #334155">
           <span style="font-size:.85rem;color:#c4b5fd">{{ uid }}</span>
           {% if uid in users %}<span style="font-size:.82rem;color:#64748b">— {{ users[uid].name }}</span>{% endif %}
           <form method="POST" action="/admin/sig/show/{{ uid }}" style="margin-left:auto">
-            <button class="action-btn btn-blue">👁 Restore</button>
-          </form>
+            <button class="action-btn btn-blue">👁 Restore</button></form>
         </div>
       {% endfor %}
     </div>
 
   {% elif page == 'broadcast' %}
     <div class="section-box">
-      <div class="section-title">Send message to all users</div>
+      <div class="section-title">Send to all users</div>
       <form method="POST" action="/admin/broadcast">
-        <textarea name="message" placeholder="Type your message..."></textarea>
-        <button class="submit-btn">📢 Send Broadcast</button>
+        <textarea name="message" placeholder="Message..."></textarea>
+        <button class="submit-btn">📢 Send</button>
       </form>
     </div>
 
@@ -333,7 +372,7 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
     {% if not logs %}<p style="color:#64748b">No broadcasts yet.</p>{% endif %}
     {% for log in logs|reverse %}
       <div class="log-item">
-        <div class="log-time">{{ log.time }} — sent to {{ log.sent_to }} users</div>
+        <div class="log-time">{{ log.time }} — {{ log.sent_to }} users</div>
         <div style="margin-top:6px">{{ log.text }}</div>
       </div>
     {% endfor %}
@@ -349,6 +388,7 @@ def ctx(page, flash="", error=""):
         "page": page, "flash": flash, "error": error,
         "signature": db["signature"],
         "sig_hidden": db["sig_hidden"],
+        "sig_global": db.get("sig_enabled_global", True),
         "stats": {
             "users": len(db["users"]),
             "verified": sum(1 for u in db["users"].values() if u["verified"]),
@@ -397,16 +437,15 @@ def admin_users():
 @app.route("/admin/block/<uid>", methods=["POST"])
 def admin_block(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["blocked"].add(uid)
+    db["blocked"].add(uid); save_data()
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🚫 User {uid} blocked."))
 
 @app.route("/admin/unblock/<uid>", methods=["POST"])
 def admin_unblock(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["blocked"].discard(uid)
+    db["blocked"].discard(uid); save_data()
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✅ User {uid} unblocked."))
 
-# Signature routes
 @app.route("/admin/signature")
 def admin_signature():
     if not session.get("admin"): return redirect("/admin")
@@ -415,34 +454,46 @@ def admin_signature():
 @app.route("/admin/signature/update", methods=["POST"])
 def admin_sig_update():
     if not session.get("admin"): return redirect("/admin")
-    db["signature"] = request.form.get("sig", "").strip()
+    db["signature"] = request.form.get("sig", "").strip(); save_data()
     return render_template_string(ADMIN_HTML, **ctx("signature", flash="✅ Signature updated!"))
+
+@app.route("/admin/sig/global/on", methods=["POST"])
+def sig_global_on():
+    if not session.get("admin"): return redirect("/admin")
+    db["sig_enabled_global"] = True; save_data()
+    return render_template_string(ADMIN_HTML, **ctx("signature", flash="✅ Signature turned ON for everyone."))
+
+@app.route("/admin/sig/global/off", methods=["POST"])
+def sig_global_off():
+    if not session.get("admin"): return redirect("/admin")
+    db["sig_enabled_global"] = False; save_data()
+    return render_template_string(ADMIN_HTML, **ctx("signature", flash="🔴 Signature turned OFF for everyone."))
 
 @app.route("/admin/sig/remove/<uid>", methods=["POST"])
 def sig_remove(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["sig_hidden"].add(uid)
-    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✍️ Signature removed for user {uid}."))
+    db["sig_hidden"].add(uid); save_data()
+    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✍️ Signature removed for {uid}."))
 
 @app.route("/admin/sig/show/<uid>", methods=["POST"])
 def sig_show(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["sig_hidden"].discard(uid)
-    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"👁 Signature restored for user {uid}."))
+    db["sig_hidden"].discard(uid); save_data()
+    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"👁 Signature restored for {uid}."))
 
 @app.route("/admin/sig/remove-manual", methods=["POST"])
 def sig_remove_manual():
     if not session.get("admin"): return redirect("/admin")
-    uid = request.form.get("uid", "").strip()
-    if uid: db["sig_hidden"].add(uid)
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash=f"✍️ Signature removed for {uid}."))
+    uid = request.form.get("uid","").strip()
+    if uid: db["sig_hidden"].add(uid); save_data()
+    return render_template_string(ADMIN_HTML, **ctx("signature", flash=f"✍️ Removed for {uid}."))
 
 @app.route("/admin/sig/show-manual", methods=["POST"])
 def sig_show_manual():
     if not session.get("admin"): return redirect("/admin")
-    uid = request.form.get("uid", "").strip()
-    db["sig_hidden"].discard(uid)
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash=f"👁 Signature restored for {uid}."))
+    uid = request.form.get("uid","").strip()
+    db["sig_hidden"].discard(uid); save_data()
+    return render_template_string(ADMIN_HTML, **ctx("signature", flash=f"👁 Restored for {uid}."))
 
 @app.route("/admin/broadcast", methods=["GET","POST"])
 def admin_broadcast():
@@ -456,6 +507,7 @@ def admin_broadcast():
                     bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown"); sent += 1
                 except: pass
             db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
+            save_data()
             return render_template_string(ADMIN_HTML, **ctx("broadcast", flash=f"✅ Sent to {sent} users!"))
     return render_template_string(ADMIN_HTML, **ctx("broadcast"))
 
@@ -464,7 +516,6 @@ def admin_logs():
     if not session.get("admin"): return redirect("/admin")
     return render_template_string(ADMIN_HTML, **ctx("logs"))
 
-# ── Start ─────────────────────────────────────────────────────────────────────
 def run_bot():
     print("🤖 Bot polling...")
     bot.infinity_polling()
