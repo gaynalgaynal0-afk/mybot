@@ -1,12 +1,10 @@
 import os
-import json
 import threading
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, session, jsonify
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# ── Config ────────────────────────────────────────────────────────────────────
 BOT_TOKEN    = os.environ.get("BOT_TOKEN")
 CHANNEL_ID   = os.environ.get("CHANNEL_ID", "@jv60fps")
 CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/jv60fps")
@@ -19,45 +17,18 @@ bot = telebot.TeleBot(BOT_TOKEN, skip_pending=True)
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
-DATA_FILE = "data.json"
-
-# ── Persistent storage ────────────────────────────────────────────────────────
-def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r") as f:
-                d = json.load(f)
-                d["blocked"]    = set(d.get("blocked", []))
-                d["sig_hidden"] = set(d.get("sig_hidden", []))
-                return d
-        except:
-            pass
-    return {
-        "users": {},
-        "blocked": set(),
-        "sig_hidden": set(),
-        "sig_enabled_global": True,   # global ON/OFF switch
-        "signature": " \n ★ upload method ★ TG: @jv_60fps ",
-        "broadcast_log": [],
-        "stats": {
-            "total_starts": 0,
-            "total_verifications": 0,
-            "total_denied": 0,
-            "total_verify_calls": 0,
-        }
+db = {
+    "users": {},
+    "blocked": set(),
+    "broadcast_log": [],
+    "stats": {
+        "total_starts": 0,
+        "total_verifications": 0,
+        "total_denied": 0,
+        "total_verify_calls": 0,
+        "total_resets": 0,
     }
-
-def save_data():
-    try:
-        d = dict(db)
-        d["blocked"]    = list(db["blocked"])
-        d["sig_hidden"] = list(db["sig_hidden"])
-        with open(DATA_FILE, "w") as f:
-            json.dump(d, f)
-    except:
-        pass
-
-db = load_data()
+}
 
 def save_user(user, verified=False):
     uid = str(user.id)
@@ -70,14 +41,15 @@ def save_user(user, verified=False):
             "verified": False,
             "api_calls": 0,
             "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "key_version": 1,   # <-- session version tracking
+            "reset_count": 0,
         }
     if verified:
         db["users"][uid]["verified"] = True
         db["users"][uid]["api_calls"] += 1
         db["users"][uid]["last_seen"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-    save_data()
 
-# ── API: Verify ───────────────────────────────────────────────────────────────
+# ── /verify/<uid> ── returns allowed + key_version so extension can detect resets
 @app.route("/verify/<uid>")
 def verify_user(uid):
     db["stats"]["total_verify_calls"] += 1
@@ -94,23 +66,23 @@ def verify_user(uid):
         save_user(m.user, verified=True)
         db["stats"]["total_verifications"] += 1
         username = "@" + m.user.username if m.user.username else m.user.first_name
-        return jsonify({"allowed": True, "username": username})
+        kv = db["users"][uid].get("key_version", 1)
+        return jsonify({"allowed": True, "username": username, "key_version": kv})
     except:
-        return jsonify({"allowed": True, "username": "User"})
+        return jsonify({"allowed": True, "username": "User", "key_version": 1})
 
-# ── API: Signature ─────────────────────────────────────────────────────────────
-@app.route("/signature/<uid>")
-def get_signature(uid):
-    # Global OFF → no signature for anyone
-    if not db.get("sig_enabled_global", True):
-        return jsonify({"text": "", "enabled": False})
-    # Per-user removed
-    if uid in db["sig_hidden"]:
-        return jsonify({"text": "", "enabled": False})
-    # Show signature
-    return jsonify({"text": db["signature"], "enabled": True})
+# ── /reset/<uid> ── called by bot button; bumps key_version → invalidates all old extension sessions
+@app.route("/reset/<uid>", methods=["POST"])
+def reset_key(uid):
+    if uid not in db["users"]:
+        return jsonify({"success": False, "reason": "unknown_user"})
+    if uid in db["blocked"]:
+        return jsonify({"success": False, "reason": "blocked"})
+    db["users"][uid]["key_version"] = db["users"][uid].get("key_version", 1) + 1
+    db["users"][uid]["reset_count"] = db["users"][uid].get("reset_count", 0) + 1
+    db["stats"]["total_resets"] += 1
+    return jsonify({"success": True, "new_version": db["users"][uid]["key_version"]})
 
-# ── Telegram ──────────────────────────────────────────────────────────────────
 def is_member(uid):
     try:
         m = bot.get_chat_member(CHANNEL_ID, uid)
@@ -128,8 +100,9 @@ def start(m):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
     kb.add(InlineKeyboardButton("🔑 Get My API Key", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("🔄 Reset My Key", callback_data="reset_key"))
     bot.send_message(m.chat.id,
-        f"👋 Welcome *{m.from_user.first_name}*!\n\n1️⃣ Join channel\n2️⃣ Click Get API Key\n3️⃣ Paste in extension\n\n⚠️ Key stops if you leave!",
+        f"👋 Welcome *{m.from_user.first_name}*!\n\n1️⃣ Join channel\n2️⃣ Click Get API Key\n3️⃣ Paste in extension\n\n⚠️ Key stops if you leave!\n\n🔄 Use *Reset My Key* if your extension says it's locked in another browser.",
         parse_mode="Markdown", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "get_api")
@@ -143,8 +116,9 @@ def button(c):
     if is_member(uid):
         save_user(c.from_user, verified=True)
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
+        kb.add(InlineKeyboardButton("🔄 Reset My Key", callback_data="reset_key"))
         bot.edit_message_text(
-            f"✅ *Verified!*\n\n🔑 *Your API Key:*\n`{uid}`\n\nPaste in extension!",
+            f"✅ *Verified!*\n\n🔑 *Your API Key:*\n`{uid}`\n\nPaste in extension!\n\n_Use Reset My Key if locked in another browser._",
             c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
     else:
         db["stats"]["total_denied"] += 1
@@ -153,13 +127,58 @@ def button(c):
         bot.edit_message_text("❌ *Access Denied!*\n\nJoin our channel first!",
             c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
+# ── Reset Key button handler ──
+@bot.callback_query_handler(func=lambda c: c.data == "reset_key")
+def handle_reset_key(c):
+    uid = str(c.from_user.id)
+    bot.answer_callback_query(c.id)
+    if uid in db["blocked"]:
+        bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
+        return
+    if not is_member(int(uid)):
+        bot.answer_callback_query(c.id, "❌ Join the channel first!", show_alert=True)
+        return
+    if uid not in db["users"]:
+        save_user(c.from_user)
+    db["users"][uid]["key_version"] = db["users"][uid].get("key_version", 1) + 1
+    db["users"][uid]["reset_count"] = db["users"][uid].get("reset_count", 0) + 1
+    db["stats"]["total_resets"] += 1
+    new_v = db["users"][uid]["key_version"]
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
+    kb.add(InlineKeyboardButton("🔄 Reset Again", callback_data="reset_key"))
+    bot.edit_message_text(
+        f"🔄 *Key Reset Done!*\n\n✅ All other browsers have been locked out.\n\n🔑 Your API Key is still:\n`{uid}`\n\nNow re-enter it in your extension to unlock.",
+        c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
+
+@bot.message_handler(commands=["reset"])
+def tg_reset(m):
+    uid = str(m.from_user.id)
+    if uid in db["blocked"]:
+        bot.send_message(m.chat.id, "🚫 You are blocked.")
+        return
+    if not is_member(m.from_user.id):
+        bot.send_message(m.chat.id, "❌ Join the channel first!")
+        return
+    if uid not in db["users"]:
+        save_user(m.from_user)
+    db["users"][uid]["key_version"] = db["users"][uid].get("key_version", 1) + 1
+    db["users"][uid]["reset_count"] = db["users"][uid].get("reset_count", 0) + 1
+    db["stats"]["total_resets"] += 1
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔄 Reset Again", callback_data="reset_key"))
+    bot.send_message(m.chat.id,
+        f"🔄 *Key Reset Done!*\n\n✅ All other extensions locked out.\n\n🔑 Your key: `{uid}`\n\nRe-enter it in the extension.",
+        parse_mode="Markdown", reply_markup=kb)
+
 @bot.message_handler(commands=["stats"])
 def tg_stats(m):
     if m.from_user.id != ADMIN_ID: return
     s = db["stats"]
     bot.send_message(m.chat.id,
         f"📊 *Stats*\n\n👥 Users: `{len(db['users'])}`\n✅ Verified: `{s['total_verifications']}`\n"
-        f"🔍 API Calls: `{s['total_verify_calls']}`\n❌ Denied: `{s['total_denied']}`\n🚫 Blocked: `{len(db['blocked'])}`",
+        f"🔍 API Calls: `{s['total_verify_calls']}`\n❌ Denied: `{s['total_denied']}`\n"
+        f"🔄 Resets: `{s['total_resets']}`\n🚫 Blocked: `{len(db['blocked'])}`",
         parse_mode="Markdown")
 
 @bot.message_handler(commands=["broadcast"])
@@ -174,10 +193,8 @@ def tg_broadcast(m):
             bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown"); sent += 1
         except: pass
     db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
-    save_data()
     bot.send_message(m.chat.id, f"✅ Sent to {sent} users.")
 
-# ── Admin HTML ────────────────────────────────────────────────────────────────
 ADMIN_HTML = """
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -205,12 +222,9 @@ tr:hover td{background:#243347}
 .badge.active{background:#166534;color:#86efac}
 .badge.blocked{background:#7c2d12;color:#fdba74}
 .badge.unverified{background:#1e3a5f;color:#93c5fd}
-.badge.sig-off{background:#4a1d96;color:#c4b5fd}
 .action-btn{border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:700;margin:2px}
 .btn-red{background:#ef4444;color:#fff}
 .btn-green{background:#22c55e;color:#fff}
-.btn-purple{background:#8b5cf6;color:#fff}
-.btn-blue{background:#3b82f6;color:#fff}
 .btn-orange{background:#f97316;color:#fff}
 textarea,input[type=text],input[type=password]{background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:8px;padding:10px 14px;font-size:.88rem;width:100%}
 .section-box{background:#1e293b;border-radius:12px;padding:20px;border:1px solid #334155;margin-bottom:20px}
@@ -223,11 +237,7 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
 .flash{background:#14532d;color:#86efac;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:.85rem}
 .log-item{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:12px 16px;margin-bottom:10px;font-size:.85rem}
 .log-time{color:#64748b;font-size:.75rem}
-.sig-preview{background:#0f172a;border:1px solid #00e5ff33;border-radius:8px;padding:12px 16px;font-size:.85rem;color:#00e5ff;font-family:monospace;margin-top:8px;word-break:break-all}
 .section-title{font-size:.9rem;font-weight:700;margin-bottom:12px;color:#cbd5e1}
-.global-toggle{display:flex;align-items:center;gap:16px;background:#0f172a;border:1px solid #334155;border-radius:10px;padding:14px 18px;margin-bottom:20px}
-.toggle-status-on{color:#22c55e;font-weight:700;font-size:.95rem}
-.toggle-status-off{color:#ef4444;font-weight:700;font-size:.95rem}
 </style></head><body>
 {% if not session.get('admin') %}
 <div class="login-box">
@@ -243,7 +253,6 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
   <h2>🎮 JV-60FPS Admin</h2>
   <a href="/admin"           class="{{ 'active' if page=='dashboard' }}">📊 Dashboard</a>
   <a href="/admin/users"     class="{{ 'active' if page=='users' }}">👥 Users</a>
-  <a href="/admin/signature" class="{{ 'active' if page=='signature' }}">✍️ Signature</a>
   <a href="/admin/broadcast" class="{{ 'active' if page=='broadcast' }}">📢 Broadcast</a>
   <a href="/admin/logs"      class="{{ 'active' if page=='logs' }}">📋 Logs</a>
 </div>
@@ -252,7 +261,6 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
     <h1>
       {% if page=='dashboard' %}📊 Dashboard
       {% elif page=='users' %}👥 Users
-      {% elif page=='signature' %}✍️ Signature Control
       {% elif page=='broadcast' %}📢 Broadcast
       {% elif page=='logs' %}📋 Broadcast Logs
       {% endif %}
@@ -266,22 +274,22 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
       <div class="card"><div class="label">Total Users</div><div class="value">{{ stats.users }}</div></div>
       <div class="card"><div class="label">Verified</div><div class="value">{{ stats.verified }}</div></div>
       <div class="card"><div class="label">Blocked</div><div class="value">{{ stats.blocked }}</div></div>
-      <div class="card"><div class="label">Sig Removed</div><div class="value">{{ stats.sig_hidden }}</div></div>
       <div class="card"><div class="label">Verify Calls</div><div class="value">{{ stats.verify_calls }}</div></div>
+      <div class="card"><div class="label">Key Resets</div><div class="value">{{ stats.resets }}</div></div>
       <div class="card"><div class="label">Denied</div><div class="value">{{ stats.denied }}</div></div>
     </div>
 
   {% elif page == 'users' %}
     <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Username</th><th>Joined</th><th>Last Seen</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>ID</th><th>Name</th><th>Username</th><th>Joined</th><th>Last Seen</th><th>Resets</th><th>Status</th><th>Action</th></tr></thead>
       <tbody>
         {% for uid, u in users.items() %}
         <tr>
           <td>{{ uid }}</td><td>{{ u.name }}</td><td>@{{ u.username }}</td>
           <td>{{ u.joined_at }}</td><td>{{ u.last_seen }}</td>
+          <td>{{ u.get('reset_count', 0) }}</td>
           <td>
             {% if uid in blocked %}<span class="badge blocked">🚫 Blocked</span>
-            {% elif uid in sig_hidden %}<span class="badge sig-off">✍️ No Sig</span>
             {% elif u.verified %}<span class="badge active">✔ Active</span>
             {% else %}<span class="badge unverified">✘ Unverified</span>{% endif %}
           </td>
@@ -293,71 +301,13 @@ textarea,input[type=text],input[type=password]{background:#0f172a;border:1px sol
               <form method="POST" action="/admin/block/{{ uid }}" style="display:inline">
                 <button class="action-btn btn-red">🚫 Block</button></form>
             {% endif %}
-            {% if uid in sig_hidden %}
-              <form method="POST" action="/admin/sig/show/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-blue">👁 Show Sig</button></form>
-            {% else %}
-              <form method="POST" action="/admin/sig/remove/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-purple">✍️ Remove Sig</button></form>
-            {% endif %}
+            <form method="POST" action="/admin/reset/{{ uid }}" style="display:inline">
+              <button class="action-btn btn-orange">🔄 Reset Key</button></form>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-
-  {% elif page == 'signature' %}
-    <div class="global-toggle">
-      <span style="font-size:.9rem;color:#94a3b8">Global Signature:</span>
-      {% if sig_global %}
-        <span class="toggle-status-on">✅ ON — showing to all users</span>
-        <form method="POST" action="/admin/sig/global/off" style="margin-left:auto">
-          <button class="action-btn btn-red" style="padding:8px 18px">🔴 Turn OFF for Everyone</button>
-        </form>
-      {% else %}
-        <span class="toggle-status-off">🔴 OFF — hidden for all users</span>
-        <form method="POST" action="/admin/sig/global/on" style="margin-left:auto">
-          <button class="action-btn btn-green" style="padding:8px 18px">✅ Turn ON for Everyone</button>
-        </form>
-      {% endif %}
-    </div>
-    <div class="section-box">
-      <div class="section-title">✍️ Current Signature</div>
-      <div class="sig-preview">{{ signature }}</div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">✏️ Update Signature Text</div>
-      <form method="POST" action="/admin/signature/update">
-        <textarea name="sig">{{ signature }}</textarea>
-        <button class="submit-btn">💾 Save</button>
-      </form>
-    </div>
-    <div class="section-box">
-      <div class="section-title">👤 Remove Sig From One User</div>
-      <form method="POST" action="/admin/sig/remove-manual">
-        <input type="text" name="uid" placeholder="Telegram User ID" style="margin-bottom:10px">
-        <button class="action-btn btn-purple" style="padding:10px 18px">✍️ Remove</button>
-      </form>
-    </div>
-    <div class="section-box">
-      <div class="section-title">👤 Restore Sig For One User</div>
-      <form method="POST" action="/admin/sig/show-manual">
-        <input type="text" name="uid" placeholder="Telegram User ID" style="margin-bottom:10px">
-        <button class="action-btn btn-blue" style="padding:10px 18px">👁 Restore</button>
-      </form>
-    </div>
-    <div class="section-box">
-      <div class="section-title">📋 Users With Signature Removed ({{ sig_hidden|length }})</div>
-      {% if not sig_hidden %}<p style="color:#64748b;font-size:.85rem">None.</p>{% endif %}
-      {% for uid in sig_hidden %}
-        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid #334155">
-          <span style="font-size:.85rem;color:#c4b5fd">{{ uid }}</span>
-          {% if uid in users %}<span style="font-size:.82rem;color:#64748b">— {{ users[uid].name }}</span>{% endif %}
-          <form method="POST" action="/admin/sig/show/{{ uid }}" style="margin-left:auto">
-            <button class="action-btn btn-blue">👁 Restore</button></form>
-        </div>
-      {% endfor %}
-    </div>
 
   {% elif page == 'broadcast' %}
     <div class="section-box">
@@ -386,25 +336,21 @@ def ctx(page, flash="", error=""):
     s = db["stats"]
     return {
         "page": page, "flash": flash, "error": error,
-        "signature": db["signature"],
-        "sig_hidden": db["sig_hidden"],
-        "sig_global": db.get("sig_enabled_global", True),
         "stats": {
             "users": len(db["users"]),
             "verified": sum(1 for u in db["users"].values() if u["verified"]),
             "blocked": len(db["blocked"]),
-            "sig_hidden": len(db["sig_hidden"]),
             "starts": s["total_starts"],
             "verifications": s["total_verifications"],
             "denied": s["total_denied"],
             "verify_calls": s["total_verify_calls"],
+            "resets": s["total_resets"],
         },
         "users": db["users"],
         "blocked": db["blocked"],
         "logs": db["broadcast_log"],
     }
 
-# ── Flask Routes ──────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
     return '🤖 JV-60FPS Bot running! <a href="/admin">Admin Panel</a>'
@@ -437,63 +383,23 @@ def admin_users():
 @app.route("/admin/block/<uid>", methods=["POST"])
 def admin_block(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["blocked"].add(uid); save_data()
+    db["blocked"].add(uid)
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🚫 User {uid} blocked."))
 
 @app.route("/admin/unblock/<uid>", methods=["POST"])
 def admin_unblock(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["blocked"].discard(uid); save_data()
+    db["blocked"].discard(uid)
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✅ User {uid} unblocked."))
 
-@app.route("/admin/signature")
-def admin_signature():
+@app.route("/admin/reset/<uid>", methods=["POST"])
+def admin_reset_key(uid):
     if not session.get("admin"): return redirect("/admin")
-    return render_template_string(ADMIN_HTML, **ctx("signature"))
-
-@app.route("/admin/signature/update", methods=["POST"])
-def admin_sig_update():
-    if not session.get("admin"): return redirect("/admin")
-    db["signature"] = request.form.get("sig", "").strip(); save_data()
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash="✅ Signature updated!"))
-
-@app.route("/admin/sig/global/on", methods=["POST"])
-def sig_global_on():
-    if not session.get("admin"): return redirect("/admin")
-    db["sig_enabled_global"] = True; save_data()
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash="✅ Signature turned ON for everyone."))
-
-@app.route("/admin/sig/global/off", methods=["POST"])
-def sig_global_off():
-    if not session.get("admin"): return redirect("/admin")
-    db["sig_enabled_global"] = False; save_data()
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash="🔴 Signature turned OFF for everyone."))
-
-@app.route("/admin/sig/remove/<uid>", methods=["POST"])
-def sig_remove(uid):
-    if not session.get("admin"): return redirect("/admin")
-    db["sig_hidden"].add(uid); save_data()
-    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✍️ Signature removed for {uid}."))
-
-@app.route("/admin/sig/show/<uid>", methods=["POST"])
-def sig_show(uid):
-    if not session.get("admin"): return redirect("/admin")
-    db["sig_hidden"].discard(uid); save_data()
-    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"👁 Signature restored for {uid}."))
-
-@app.route("/admin/sig/remove-manual", methods=["POST"])
-def sig_remove_manual():
-    if not session.get("admin"): return redirect("/admin")
-    uid = request.form.get("uid","").strip()
-    if uid: db["sig_hidden"].add(uid); save_data()
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash=f"✍️ Removed for {uid}."))
-
-@app.route("/admin/sig/show-manual", methods=["POST"])
-def sig_show_manual():
-    if not session.get("admin"): return redirect("/admin")
-    uid = request.form.get("uid","").strip()
-    db["sig_hidden"].discard(uid); save_data()
-    return render_template_string(ADMIN_HTML, **ctx("signature", flash=f"👁 Restored for {uid}."))
+    if uid in db["users"]:
+        db["users"][uid]["key_version"] = db["users"][uid].get("key_version", 1) + 1
+        db["users"][uid]["reset_count"] = db["users"][uid].get("reset_count", 0) + 1
+        db["stats"]["total_resets"] += 1
+    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🔄 Key reset for user {uid}."))
 
 @app.route("/admin/broadcast", methods=["GET","POST"])
 def admin_broadcast():
@@ -507,7 +413,6 @@ def admin_broadcast():
                     bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown"); sent += 1
                 except: pass
             db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
-            save_data()
             return render_template_string(ADMIN_HTML, **ctx("broadcast", flash=f"✅ Sent to {sent} users!"))
     return render_template_string(ADMIN_HTML, **ctx("broadcast"))
 
