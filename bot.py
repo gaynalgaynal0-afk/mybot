@@ -40,6 +40,7 @@ def save_user(user, verified=False):
             "username": user.username or "N/A",
             "joined_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "verified": False,
+            "active_token": None,   # active browser session token
             "api_calls": 0,
             "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
@@ -50,15 +51,17 @@ def save_user(user, verified=False):
 
 
 # ── KEY API ENDPOINT — Extension calls this ───────────────────────────────────
-@app.route("/verify/<uid>")
-def verify_user(uid):
+@app.route("/verify/<uid>/<browser_token>")
+def verify_user(uid, browser_token):
     """
-    Extension calls: GET /verify/<telegram_user_id>
+    Extension calls: GET /verify/<telegram_user_id>/<browser_token>
     Returns JSON: { "allowed": true/false, "reason": "..." }
+    Single-session: only one browser token active per user.
+    Reset via Telegram bot clears the token.
     """
     db["stats"]["total_verify_calls"] += 1
 
-    # 1. Blocked check — your admin panel controls this
+    # 1. Blocked check
     if uid in db["blocked"]:
         return jsonify({"allowed": False, "reason": "blocked"})
 
@@ -72,7 +75,20 @@ def verify_user(uid):
     if not is_member:
         return jsonify({"allowed": False, "reason": "not_member"})
 
-    # 3. Save user info
+    # 3. Single-session check
+    user_data = db["users"].get(uid)
+    stored_token = user_data["active_token"] if user_data else None
+
+    if stored_token is None:
+        # No session claimed yet — this browser claims it
+        if uid not in db["users"]:
+            save_user(m.user)
+        db["users"][uid]["active_token"] = browser_token
+    elif stored_token != browser_token:
+        # Different browser already has the session
+        return jsonify({"allowed": False, "reason": "session_taken"})
+
+    # 4. All good — save and return
     try:
         user = m.user
         save_user(user, verified=True)
@@ -101,6 +117,7 @@ def start(m):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
     kb.add(InlineKeyboardButton("🔑 Get My API Key", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("🔄 Reset API Key", callback_data="reset_key"))
     bot.send_message(
         m.chat.id,
         f"👋 Welcome *{m.from_user.first_name}*!\n\n"
@@ -134,6 +151,28 @@ def button(c):
             c.message.chat.id, c.message.message_id,
             parse_mode="Markdown", reply_markup=kb
         )
+
+@bot.callback_query_handler(func=lambda c: c.data == "reset_key")
+def reset_key(c):
+    uid = str(c.from_user.id)
+    bot.answer_callback_query(c.id)
+    if uid in db["blocked"]:
+        bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
+        return
+    # Clear session token — old browser is now locked out
+    if uid in db["users"]:
+        db["users"][uid]["active_token"] = None
+        db["users"][uid]["verified"] = False
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔑 Get New API Key", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
+    bot.edit_message_text(
+        "🔄 *API Key Reset!*\n\n"
+        "✅ Old browser has been kicked out.\n"
+        "Click below to claim the key on your new browser.",
+        c.message.chat.id, c.message.message_id,
+        parse_mode="Markdown", reply_markup=kb
+    )
 
 @bot.message_handler(commands=["stats"])
 def tg_stats(m):
@@ -201,9 +240,11 @@ ADMIN_HTML = """
   .badge.yes { background: #166534; color: #86efac; }
   .badge.no  { background: #7f1d1d; color: #fca5a5; }
   .badge.blocked { background: #7c2d12; color: #fdba74; }
-  .action-btn { border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; font-weight: 700; }
+  .badge.session { background: #1e3a5f; color: #7dd3fc; }
+  .action-btn { border: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; font-weight: 700; margin-right: 4px; }
   .btn-red   { background: #ef4444; color: white; }
   .btn-green { background: #22c55e; color: white; }
+  .btn-orange { background: #f97316; color: white; }
   textarea, input[type=text], input[type=password] {
     background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
     border-radius: 8px; padding: 10px 14px; font-size: 0.88rem; width: 100%;
@@ -266,13 +307,13 @@ ADMIN_HTML = """
         <div class="card"><div class="label">/start Calls</div><div class="value">{{ stats.starts }}</div></div>
       </div>
       <div class="section-box">
-        <div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">🔗 Extension Verify Endpoint (paste in popup.js)</div>
+        <div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">🔗 Extension Verify Endpoint</div>
         <div class="verify-url">{{ verify_url }}</div>
       </div>
 
     {% elif page == 'users' %}
       <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Username</th><th>Joined</th><th>Last Seen</th><th>Status</th><th>Action</th></tr></thead>
+        <thead><tr><th>ID</th><th>Name</th><th>Username</th><th>Joined</th><th>Last Seen</th><th>Session</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>
           {% for uid, u in users.items() %}
           <tr>
@@ -281,6 +322,13 @@ ADMIN_HTML = """
             <td>@{{ u.username }}</td>
             <td>{{ u.joined_at }}</td>
             <td>{{ u.last_seen }}</td>
+            <td>
+              {% if u.active_token %}
+                <span class="badge session">🟢 Active</span>
+              {% else %}
+                <span class="badge no">⚪ None</span>
+              {% endif %}
+            </td>
             <td>
               {% if uid in blocked %}<span class="badge blocked">🚫 Blocked</span>
               {% elif u.verified %}<span class="badge yes">✔ Active</span>
@@ -296,6 +344,9 @@ ADMIN_HTML = """
                   <button class="action-btn btn-red">🚫 Block</button>
                 </form>
               {% endif %}
+              <form method="POST" action="/admin/reset-session/{{ uid }}" style="display:inline">
+                <button class="action-btn btn-orange">🔄 Reset</button>
+              </form>
             </td>
           </tr>
           {% endfor %}
@@ -323,7 +374,6 @@ ADMIN_HTML = """
     {% elif page == 'settings' %}
       <div class="section-box">
         <div style="font-size:0.9rem;font-weight:600;margin-bottom:12px;">🔗 Verify API URL</div>
-        <p style="font-size:0.82rem;color:#94a3b8;margin-bottom:10px;">Copy this URL and paste it into your extension's <code>popup.js</code> as the VERIFY_URL.</p>
         <div class="verify-url">{{ verify_url }}</div>
       </div>
       <div class="section-box">
@@ -352,7 +402,7 @@ def ctx(page, flash="", error=""):
     host = request.host_url.rstrip("/")
     return {
         "page": page, "flash": flash, "error": error,
-        "verify_url": f"{host}/verify/USER_ID",
+        "verify_url": f"{host}/verify/USER_ID/BROWSER_TOKEN",
         "stats": {
             "users": len(db["users"]),
             "verified": sum(1 for u in db["users"].values() if u["verified"]),
@@ -401,13 +451,21 @@ def admin_users():
 def admin_block(uid):
     if not session.get("admin"): return redirect("/admin")
     db["blocked"].add(uid)
-    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🚫 User {uid} blocked. They can no longer use the extension."))
+    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🚫 User {uid} blocked."))
 
 @app.route("/admin/unblock/<uid>", methods=["POST"])
 def admin_unblock(uid):
     if not session.get("admin"): return redirect("/admin")
     db["blocked"].discard(uid)
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✅ User {uid} unblocked."))
+
+@app.route("/admin/reset-session/<uid>", methods=["POST"])
+def admin_reset_session(uid):
+    if not session.get("admin"): return redirect("/admin")
+    if uid in db["users"]:
+        db["users"][uid]["active_token"] = None
+        db["users"][uid]["verified"] = False
+    return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🔄 Session reset for {uid}."))
 
 @app.route("/admin/block-manual", methods=["POST"])
 def block_manual():
