@@ -517,3 +517,143 @@ if __name__ == "__main__":
     threading.Thread(target=run_bot, daemon=True).start()
     print(f"🌐 Server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT)
+
+
+# ═══════════════════════════════════════════════════════════
+# WMV CONVERTER ENDPOINT
+# POST /convert  — accepts multipart video, returns WMV blob
+# ═══════════════════════════════════════════════════════════
+import subprocess
+import tempfile
+import uuid
+import json as _json
+
+from flask_cors import CORS
+CORS(app, resources={r"/convert": {"origins": "*"}, r"/convert_progress/*": {"origins": "*"}})
+
+# Store active jobs in memory
+_jobs = {}
+
+def _get_ffmpeg():
+    """Check ffmpeg is available on Render's Linux instance."""
+    import shutil
+    return shutil.which("ffmpeg")
+
+def _do_convert(job_id, input_path, output_path):
+    ffmpeg = _get_ffmpeg()
+    if not ffmpeg:
+        _jobs[job_id] = {"status": "error", "message": "FFmpeg not available on server"}
+        return
+
+    _jobs[job_id] = {"status": "converting", "percent": 10, "step": "STARTING FFMPEG..."}
+
+    # Get duration for progress
+    duration = 0
+    try:
+        probe = subprocess.run(
+            [ffmpeg, "-i", input_path, "-f", "null", "-"],
+            capture_output=True, text=True
+        )
+        for line in probe.stderr.split("\n"):
+            if "Duration" in line:
+                parts = line.strip().split("Duration:")[1].split(",")[0].strip()
+                h, m, s = parts.split(":")
+                duration = float(h)*3600 + float(m)*60 + float(s)
+                break
+    except:
+        pass
+
+    cmd = [
+        ffmpeg, "-y",
+        "-i", input_path,
+        "-vcodec", "wmv2",
+        "-acodec", "wmav2",
+        "-b:v", "4000k",
+        "-b:a", "192k",
+        "-f", "asf",
+        "-progress", "pipe:2",
+        output_path
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+    for line in proc.stderr:
+        line = line.strip()
+        if line.startswith("out_time_ms="):
+            try:
+                t = int(line.split("=")[1]) / 1_000_000
+                pct = min(95, int(15 + (t / duration) * 80)) if duration > 0 else 50
+                _jobs[job_id] = {"status": "converting", "percent": pct, "step": "CONVERTING TO WMV..."}
+            except:
+                pass
+
+    proc.wait()
+
+    try: os.remove(input_path)
+    except: pass
+
+    if proc.returncode == 0 and os.path.exists(output_path):
+        _jobs[job_id] = {"status": "done", "percent": 100, "output": output_path}
+    else:
+        _jobs[job_id] = {"status": "error", "message": "FFmpeg conversion failed"}
+
+
+@app.route("/convert", methods=["POST", "OPTIONS"])
+def convert_video():
+    if request.method == "OPTIONS":
+        # CORS preflight
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    f = request.files["file"]
+    job_id = uuid.uuid4().hex
+    tmp_dir = tempfile.gettempdir()
+
+    orig_name = f.filename or "video"
+    input_path  = os.path.join(tmp_dir, job_id + "_" + orig_name)
+    output_name = os.path.splitext(orig_name)[0] + ".wmv"
+    output_path = os.path.join(tmp_dir, job_id + "_" + output_name)
+
+    f.save(input_path)
+    _jobs[job_id] = {"status": "queued", "percent": 5, "step": "QUEUED..."}
+
+    import threading
+    threading.Thread(target=_do_convert, args=(job_id, input_path, output_path), daemon=True).start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/convert_progress/<job_id>")
+def convert_progress(job_id):
+    resp = jsonify(_jobs.get(job_id, {"status": "unknown"}))
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@app.route("/convert_download/<job_id>")
+def convert_download(job_id):
+    job = _jobs.get(job_id, {})
+    output = job.get("output", "")
+    if job.get("status") != "done" or not os.path.exists(output):
+        return jsonify({"error": "Not ready"}), 404
+
+    from flask import send_file
+    filename = os.path.basename(output).split("_", 1)[-1]  # strip job_id prefix
+
+    resp = send_file(output, mimetype="video/x-ms-wmv", as_attachment=True, download_name=filename)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+
+    # Clean up after sending
+    @resp.call_on_close
+    def cleanup():
+        try: os.remove(output)
+        except: pass
+        _jobs.pop(job_id, None)
+
+    return resp
