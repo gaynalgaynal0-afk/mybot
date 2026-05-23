@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JV PATCHER</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0c0c0f;
+  --surface: #131318;
+  --surface2: #1a1a22;
+  --border: rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.1);
+  --text: #e8e8f0;
+  --muted: rgba(232,232,240,0.4);
+  --dim: rgba(232,232,240,0.2);
+  --accent: #7c6bff;
+  --accent2: #9d8fff;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --red: #f87171;
+  --radius: 16px;
+  --radius-sm: 10px;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; -webkit-font-smoothing: antialiased; }
+body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124,107,255,0.12) 0%, transparent 60%); }
+.wrap { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 12px; }
+.header { padding: 8px 0 16px; display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-icon { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), #5b4edd); display: flex; align-items: center; justify-content: center; font-size: 18px; box-shadow: 0 4px 20px rgba(124,107,255,0.35); }
+.brand-text { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+.brand-text span { color: var(--accent2); }
+.badge { background: var(--surface2); border: 1px solid var(--border2); border-radius: 100px; padding: 5px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent2); }
+.speed-badge { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--green); background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.2); border-radius: 100px; padding: 3px 8px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.drop-zone { padding: 40px 32px; text-align: center; cursor: pointer; position: relative; transition: background 0.2s; }
+.drop-zone:hover { background: rgba(124,107,255,0.04); }
+.drop-zone.drag-over { background: rgba(124,107,255,0.08); }
+.drop-zone.drag-over .dz-ring { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(124,107,255,0.15); }
+.drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.dz-ring { width: 72px; height: 72px; border-radius: 50%; border: 1.5px solid var(--border2); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; transition: all 0.2s; background: var(--surface2); }
+.dz-ring svg { width: 28px; height: 28px; stroke: var(--muted); transition: stroke 0.2s; }
+.drop-zone:hover .dz-ring svg { stroke: var(--accent2); }
+.dz-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.dz-sub { font-size: 13px; color: var(--muted); }
+.divider { height: 1px; background: var(--border); }
+.file-info { display: none; padding: 16px 20px; align-items: center; gap: 12px; }
+.file-info.show { display: flex; }
+.fi-icon { width: 40px; height: 40px; border-radius: var(--radius-sm); background: var(--surface2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.fi-text { flex: 1; min-width: 0; }
+.fi-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.fi-meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); display: flex; gap: 10px; }
+.fi-remove { width: 28px; height: 28px; border-radius: 8px; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--dim); flex-shrink: 0; transition: all 0.15s; }
+.fi-remove:hover { background: rgba(248,113,113,0.1); color: var(--red); }
+.patch-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: calc(100% - 40px); margin: 20px; padding: 15px 24px; background: linear-gradient(135deg, var(--accent), #5b4edd); border: none; border-radius: var(--radius-sm); color: #fff; font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 24px rgba(124,107,255,0.35); }
+.patch-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 32px rgba(124,107,255,0.45); }
+.patch-btn:disabled { background: var(--surface2); color: var(--dim); box-shadow: none; cursor: not-allowed; }
+.patch-btn svg { width: 18px; height: 18px; stroke: currentColor; flex-shrink: 0; }
+.progress-section { display: none; padding: 0 20px 20px; }
+.progress-section.show { display: block; }
+.progress-track { height: 4px; background: var(--surface2); border-radius: 100px; overflow: hidden; margin-bottom: 8px; }
+.progress-fill { height: 100%; border-radius: 100px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.3s; width: 0%; box-shadow: 0 0 8px rgba(124,107,255,0.5); }
+.progress-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+.download-section { display: none; padding: 0 20px 20px; }
+.download-section.show { display: block; }
+.download-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 14px; background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25); border-radius: var(--radius-sm); color: var(--green); font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; text-decoration: none; transition: all 0.2s; }
+.download-btn:hover { background: rgba(52,211,153,0.14); border-color: rgba(52,211,153,0.4); }
+.download-btn svg { width: 16px; height: 16px; stroke: currentColor; }
+.log-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.log-header { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.log-title { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; }
+.log-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); transition: all 0.3s; }
+.log-dot.active { background: var(--green); box-shadow: 0 0 6px var(--green); animation: blink 1.5s ease infinite; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
+.log-body { padding: 12px 16px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.9; max-height: 180px; overflow-y: auto; }
+.log-body::-webkit-scrollbar { width: 3px; }
+.log-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.log-line { display: flex; gap: 10px; }
+.log-line .t { color: var(--dim); flex-shrink: 0; }
+.log-line.info .m { color: rgba(232,232,240,0.65); }
+.log-line.ok .m { color: var(--green); }
+.log-line.warn .m { color: var(--yellow); }
+.log-line.err .m { color: var(--red); }
+.footer { text-align: center; font-size: 12px; color: var(--dim); padding: 4px 0 8px; }
+.footer a { color: var(--accent2); text-decoration: none; font-weight: 600; }
+.footer a:hover { text-decoration: underline; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="header">
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div class="brand-text">JV <span>Patcher</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="badge">60 FPS</div>
+      <div class="speed-badge">⚡ Instant</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept="video/mp4,.mp4">
+      <div class="dz-ring">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+        </svg>
+      </div>
+      <div class="dz-title">Drop your MP4 here</div>
+      <div class="dz-sub">or click to browse files</div>
+    </div>
+
+    <div id="fileInfo" class="file-info">
+      <div class="fi-icon">🎬</div>
+      <div class="fi-text">
+        <div class="fi-name" id="fileName">—</div>
+        <div class="fi-meta">
+          <span id="fileSize">—</span>
+          <span id="fileFps">—</span>
+        </div>
+      </div>
+      <button class="fi-remove" onclick="clearFile()">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="divider"></div>
+
+    <button class="patch-btn" id="patchBtn" onclick="runPatch()" disabled>
+      <svg fill="none" viewBox="0 0 24 24" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"/>
+      </svg>
+      Patch to 60 FPS
+    </button>
+
+    <div class="progress-section" id="progressSection">
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-label" id="progressLabel">Patching atoms...</div>
+    </div>
+
+    <div class="download-section" id="downloadSection">
+      <a class="download-btn" id="downloadBtn" href="#" download="">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+        </svg>
+        Save Patched Video
+      </a>
+    </div>
+  </div>
+
+  <div class="log-card">
+    <div class="log-header">
+      <span class="log-title">Output Log</span>
+      <div class="log-dot" id="logDot"></div>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-line info"><span class="t">00:00</span><span class="m">Ready — drop an MP4 to start.</span></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Powered by <a href="https://t.me/jv_60fps" target="_blank">@jv_60fps</a>
+  </div>
+
+</div>
+<script src="patcher.js"></script>
+</body>
+</html>
