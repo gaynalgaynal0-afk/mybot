@@ -1,7 +1,12 @@
 import os
 import threading
+import subprocess
+import tempfile
+import uuid
+import shutil
 from datetime import datetime
-from flask import Flask, render_template_string, request, redirect, session, jsonify
+from flask import Flask, render_template_string, request, redirect, session, jsonify, send_file
+from flask_cors import CORS
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -17,11 +22,12 @@ PORT         = int(os.environ.get("PORT", 8080))
 bot = telebot.TeleBot(BOT_TOKEN, skip_pending=True)
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+CORS(app, resources={r"/convert": {"origins": "*"}, r"/convert_progress/*": {"origins": "*"}, r"/convert_download/*": {"origins": "*"}})
 
 # ── Database ─────────────────────────────────────────────────────────────────
 db = {
-    "users": {},        # uid → info
-    "blocked": set(),   # blocked uids (strings)
+    "users": {},
+    "blocked": set(),
     "broadcast_log": [],
     "stats": {
         "total_starts": 0,
@@ -40,7 +46,7 @@ def save_user(user, verified=False):
             "username": user.username or "N/A",
             "joined_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "verified": False,
-            "active_token": None,   # active browser session token
+            "active_token": None,
             "api_calls": 0,
             "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
@@ -50,45 +56,132 @@ def save_user(user, verified=False):
         db["users"][uid]["last_seen"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-# ── KEY API ENDPOINT — Extension calls this ───────────────────────────────────
+# ── WMV Converter ─────────────────────────────────────────────────────────────
+_jobs = {}
+
+def _do_convert(job_id, input_path, output_path):
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        _jobs[job_id] = {"status": "error", "message": "FFmpeg not available on server"}
+        return
+
+    _jobs[job_id] = {"status": "converting", "percent": 10, "step": "STARTING FFMPEG..."}
+
+    duration = 0
+    try:
+        probe = subprocess.run([ffmpeg, "-i", input_path, "-f", "null", "-"], capture_output=True, text=True)
+        for line in probe.stderr.split("\n"):
+            if "Duration" in line:
+                parts = line.strip().split("Duration:")[1].split(",")[0].strip()
+                h, m, s = parts.split(":")
+                duration = float(h)*3600 + float(m)*60 + float(s)
+                break
+    except:
+        pass
+
+    cmd = [
+        ffmpeg, "-y", "-i", input_path,
+        "-vcodec", "wmv2", "-acodec", "wmav2",
+        "-b:v", "4000k", "-b:a", "192k",
+        "-f", "asf", "-progress", "pipe:2",
+        output_path
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    for line in proc.stderr:
+        line = line.strip()
+        if line.startswith("out_time_ms="):
+            try:
+                t = int(line.split("=")[1]) / 1_000_000
+                pct = min(95, int(15 + (t / duration) * 80)) if duration > 0 else 50
+                _jobs[job_id] = {"status": "converting", "percent": pct, "step": "CONVERTING TO WMV..."}
+            except:
+                pass
+    proc.wait()
+
+    try: os.remove(input_path)
+    except: pass
+
+    if proc.returncode == 0 and os.path.exists(output_path):
+        _jobs[job_id] = {"status": "done", "percent": 100, "output": output_path}
+    else:
+        _jobs[job_id] = {"status": "error", "message": "FFmpeg conversion failed"}
+
+
+@app.route("/convert", methods=["POST", "OPTIONS"])
+def convert_video():
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    f = request.files["file"]
+    job_id = uuid.uuid4().hex
+    tmp_dir = tempfile.gettempdir()
+    orig_name = f.filename or "video"
+    input_path  = os.path.join(tmp_dir, job_id + "_" + orig_name)
+    output_name = os.path.splitext(orig_name)[0] + ".wmv"
+    output_path = os.path.join(tmp_dir, job_id + "_" + output_name)
+
+    f.save(input_path)
+    _jobs[job_id] = {"status": "queued", "percent": 5, "step": "QUEUED..."}
+    threading.Thread(target=_do_convert, args=(job_id, input_path, output_path), daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/convert_progress/<job_id>")
+def convert_progress(job_id):
+    resp = jsonify(_jobs.get(job_id, {"status": "unknown"}))
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@app.route("/convert_download/<job_id>")
+def convert_download(job_id):
+    job = _jobs.get(job_id, {})
+    output = job.get("output", "")
+    if job.get("status") != "done" or not os.path.exists(output):
+        return jsonify({"error": "Not ready"}), 404
+
+    filename = os.path.basename(output).split("_", 1)[-1]
+    resp = send_file(output, mimetype="video/x-ms-wmv", as_attachment=True, download_name=filename)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+
+    @resp.call_on_close
+    def cleanup():
+        try: os.remove(output)
+        except: pass
+        _jobs.pop(job_id, None)
+
+    return resp
+
+
+# ── KEY API ENDPOINT ──────────────────────────────────────────────────────────
 @app.route("/verify/<uid>/<browser_token>")
 def verify_user(uid, browser_token):
-    """
-    Extension calls: GET /verify/<telegram_user_id>/<browser_token>
-    Returns JSON: { "allowed": true/false, "reason": "..." }
-    Single-session: only one browser token active per user.
-    Reset via Telegram bot clears the token.
-    """
     db["stats"]["total_verify_calls"] += 1
-
-    # 1. Blocked check
     if uid in db["blocked"]:
         return jsonify({"allowed": False, "reason": "blocked"})
-
-    # 2. Check Telegram channel membership
     try:
         m = bot.get_chat_member(CHANNEL_ID, int(uid))
         is_member = m.status in ["member", "administrator", "creator"]
     except:
         return jsonify({"allowed": False, "reason": "bot_error"})
-
     if not is_member:
         return jsonify({"allowed": False, "reason": "not_member"})
-
-    # 3. Single-session check
     user_data = db["users"].get(uid)
     stored_token = user_data["active_token"] if user_data else None
-
     if stored_token is None:
-        # No session claimed yet — this browser claims it
         if uid not in db["users"]:
             save_user(m.user)
         db["users"][uid]["active_token"] = browser_token
     elif stored_token != browser_token:
-        # Different browser already has the session
         return jsonify({"allowed": False, "reason": "session_taken"})
-
-    # 4. All good — save and return
     try:
         user = m.user
         save_user(user, verified=True)
@@ -118,13 +211,11 @@ def start(m):
     kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
     kb.add(InlineKeyboardButton("🔑 Get My API Key", callback_data="get_api"))
     kb.add(InlineKeyboardButton("🔄 Reset API Key", callback_data="reset_key"))
-    bot.send_message(
-        m.chat.id,
+    bot.send_message(m.chat.id,
         f"👋 Welcome *{m.from_user.first_name}*!\n\n"
         "1️⃣ Join channel\n2️⃣ Click Get API Key\n3️⃣ Paste in extension\n\n"
         "⚠️ Key stops if you leave!",
-        parse_mode="Markdown", reply_markup=kb
-    )
+        parse_mode="Markdown", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "get_api")
 def button(c):
@@ -139,18 +230,13 @@ def button(c):
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
         bot.edit_message_text(
             f"✅ *Verified!*\n\n🔑 *Your API Key:*\n`{uid}`\n\nPaste in extension!",
-            c.message.chat.id, c.message.message_id,
-            parse_mode="Markdown", reply_markup=kb
-        )
+            c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
     else:
         db["stats"]["total_denied"] += 1
         kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
         kb.add(InlineKeyboardButton("🔄 Try Again", callback_data="get_api"))
-        bot.edit_message_text(
-            "❌ *Access Denied!*\n\nJoin our channel first!",
-            c.message.chat.id, c.message.message_id,
-            parse_mode="Markdown", reply_markup=kb
-        )
+        bot.edit_message_text("❌ *Access Denied!*\n\nJoin our channel first!",
+            c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "reset_key")
 def reset_key(c):
@@ -159,41 +245,27 @@ def reset_key(c):
     if uid in db["blocked"]:
         bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
         return
-    # Clear session token — old browser is now locked out
     if uid in db["users"]:
         db["users"][uid]["active_token"] = None
         db["users"][uid]["verified"] = False
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🔑 Get New API Key", callback_data="get_api"))
     kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-    bot.edit_message_text(
-        "🔄 *API Key Reset!*\n\n"
-        "✅ Old browser has been kicked out.\n"
-        "Click below to claim the key on your new browser.",
-        c.message.chat.id, c.message.message_id,
-        parse_mode="Markdown", reply_markup=kb
-    )
+    bot.edit_message_text("🔄 *API Key Reset!*\n\n✅ Old browser has been kicked out.\nClick below to claim the key on your new browser.",
+        c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
 @bot.message_handler(commands=["stats"])
 def tg_stats(m):
-    if m.from_user.id != ADMIN_ID:
-        return
+    if m.from_user.id != ADMIN_ID: return
     s = db["stats"]
-    bot.send_message(
-        m.chat.id,
-        f"📊 *Bot Stats*\n\n"
-        f"👥 Total Users: `{len(db['users'])}`\n"
-        f"✅ Verifications: `{s['total_verifications']}`\n"
-        f"🔍 Verify API Calls: `{s['total_verify_calls']}`\n"
-        f"❌ Denied: `{s['total_denied']}`\n"
-        f"🚫 Blocked: `{len(db['blocked'])}`",
-        parse_mode="Markdown"
-    )
+    bot.send_message(m.chat.id,
+        f"📊 *Bot Stats*\n\n👥 Total Users: `{len(db['users'])}`\n✅ Verifications: `{s['total_verifications']}`\n"
+        f"🔍 Verify API Calls: `{s['total_verify_calls']}`\n❌ Denied: `{s['total_denied']}`\n🚫 Blocked: `{len(db['blocked'])}`",
+        parse_mode="Markdown")
 
 @bot.message_handler(commands=["broadcast"])
 def tg_broadcast(m):
-    if m.from_user.id != ADMIN_ID:
-        return
+    if m.from_user.id != ADMIN_ID: return
     text = m.text.replace("/broadcast", "").strip()
     if not text:
         bot.send_message(m.chat.id, "Usage: /broadcast <message>")
@@ -203,13 +275,12 @@ def tg_broadcast(m):
         try:
             bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown")
             sent += 1
-        except:
-            pass
+        except: pass
     db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
     bot.send_message(m.chat.id, f"✅ Broadcast sent to {sent} users.")
 
 
-# ── Admin Panel HTML ──────────────────────────────────────────────────────────
+# ── Admin Panel ───────────────────────────────────────────────────────────────
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -245,10 +316,7 @@ ADMIN_HTML = """
   .btn-red   { background: #ef4444; color: white; }
   .btn-green { background: #22c55e; color: white; }
   .btn-orange { background: #f97316; color: white; }
-  textarea, input[type=text], input[type=password] {
-    background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
-    border-radius: 8px; padding: 10px 14px; font-size: 0.88rem; width: 100%;
-  }
+  textarea, input[type=text], input[type=password] { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 8px; padding: 10px 14px; font-size: 0.88rem; width: 100%; }
   .section-box { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; margin-bottom: 20px; }
   .section-box textarea { height: 90px; resize: vertical; margin: 10px 0; }
   .submit-btn { background: #2563eb; color: white; border: none; padding: 10px 22px; border-radius: 8px; cursor: pointer; font-weight: 700; }
@@ -294,9 +362,7 @@ ADMIN_HTML = """
       </h1>
       <a href="/admin/logout" class="logout">Logout</a>
     </div>
-
     {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
-
     {% if page == 'dashboard' %}
       <div class="cards">
         <div class="card"><div class="label">Total Users</div><div class="value">{{ stats.users }}</div></div>
@@ -310,49 +376,28 @@ ADMIN_HTML = """
         <div style="font-size:0.8rem;color:#64748b;margin-bottom:8px;">🔗 Extension Verify Endpoint</div>
         <div class="verify-url">{{ verify_url }}</div>
       </div>
-
     {% elif page == 'users' %}
       <table>
         <thead><tr><th>ID</th><th>Name</th><th>Username</th><th>Joined</th><th>Last Seen</th><th>Session</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>
           {% for uid, u in users.items() %}
           <tr>
-            <td>{{ uid }}</td>
-            <td>{{ u.name }}</td>
-            <td>@{{ u.username }}</td>
-            <td>{{ u.joined_at }}</td>
-            <td>{{ u.last_seen }}</td>
-            <td>
-              {% if u.active_token %}
-                <span class="badge session">🟢 Active</span>
-              {% else %}
-                <span class="badge no">⚪ None</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if uid in blocked %}<span class="badge blocked">🚫 Blocked</span>
-              {% elif u.verified %}<span class="badge yes">✔ Active</span>
-              {% else %}<span class="badge no">✘ Unverified</span>{% endif %}
-            </td>
+            <td>{{ uid }}</td><td>{{ u.name }}</td><td>@{{ u.username }}</td>
+            <td>{{ u.joined_at }}</td><td>{{ u.last_seen }}</td>
+            <td>{% if u.active_token %}<span class="badge session">🟢 Active</span>{% else %}<span class="badge no">⚪ None</span>{% endif %}</td>
+            <td>{% if uid in blocked %}<span class="badge blocked">🚫 Blocked</span>{% elif u.verified %}<span class="badge yes">✔ Active</span>{% else %}<span class="badge no">✘ Unverified</span>{% endif %}</td>
             <td>
               {% if uid in blocked %}
-                <form method="POST" action="/admin/unblock/{{ uid }}" style="display:inline">
-                  <button class="action-btn btn-green">✅ Unblock</button>
-                </form>
+                <form method="POST" action="/admin/unblock/{{ uid }}" style="display:inline"><button class="action-btn btn-green">✅ Unblock</button></form>
               {% else %}
-                <form method="POST" action="/admin/block/{{ uid }}" style="display:inline">
-                  <button class="action-btn btn-red">🚫 Block</button>
-                </form>
+                <form method="POST" action="/admin/block/{{ uid }}" style="display:inline"><button class="action-btn btn-red">🚫 Block</button></form>
               {% endif %}
-              <form method="POST" action="/admin/reset-session/{{ uid }}" style="display:inline">
-                <button class="action-btn btn-orange">🔄 Reset</button>
-              </form>
+              <form method="POST" action="/admin/reset-session/{{ uid }}" style="display:inline"><button class="action-btn btn-orange">🔄 Reset</button></form>
             </td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-
     {% elif page == 'broadcast' %}
       <div class="section-box">
         <div style="font-size:0.9rem;font-weight:600;margin-bottom:8px;">Send message to all users</div>
@@ -361,16 +406,11 @@ ADMIN_HTML = """
           <button class="submit-btn">📢 Send Broadcast</button>
         </form>
       </div>
-
     {% elif page == 'logs' %}
       {% if not logs %}<p style="color:#64748b">No broadcasts yet.</p>{% endif %}
       {% for log in logs|reverse %}
-        <div class="log-item">
-          <div class="log-time">{{ log.time }} — sent to {{ log.sent_to }} users</div>
-          <div style="margin-top:6px">{{ log.text }}</div>
-        </div>
+        <div class="log-item"><div class="log-time">{{ log.time }} — sent to {{ log.sent_to }} users</div><div style="margin-top:6px">{{ log.text }}</div></div>
       {% endfor %}
-
     {% elif page == 'settings' %}
       <div class="section-box">
         <div style="font-size:0.9rem;font-weight:600;margin-bottom:12px;">🔗 Verify API URL</div>
@@ -417,7 +457,6 @@ def ctx(page, flash="", error=""):
         "logs": db["broadcast_log"],
     }
 
-# ── Flask Routes ──────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
     return '🤖 JV-60FPS Bot is running! <a href="/admin">Admin Panel</a>'
@@ -471,8 +510,7 @@ def admin_reset_session(uid):
 def block_manual():
     if not session.get("admin"): return redirect("/admin")
     uid = request.form.get("uid", "").strip()
-    if uid:
-        db["blocked"].add(uid)
+    if uid: db["blocked"].add(uid)
     return render_template_string(ADMIN_HTML, **ctx("settings", flash=f"🚫 User {uid} blocked."))
 
 @app.route("/admin/unblock-manual", methods=["POST"])
@@ -517,143 +555,3 @@ if __name__ == "__main__":
     threading.Thread(target=run_bot, daemon=True).start()
     print(f"🌐 Server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT)
-
-
-# ═══════════════════════════════════════════════════════════
-# WMV CONVERTER ENDPOINT
-# POST /convert  — accepts multipart video, returns WMV blob
-# ═══════════════════════════════════════════════════════════
-import subprocess
-import tempfile
-import uuid
-import json as _json
-
-from flask_cors import CORS
-CORS(app, resources={r"/convert": {"origins": "*"}, r"/convert_progress/*": {"origins": "*"}})
-
-# Store active jobs in memory
-_jobs = {}
-
-def _get_ffmpeg():
-    """Check ffmpeg is available on Render's Linux instance."""
-    import shutil
-    return shutil.which("ffmpeg")
-
-def _do_convert(job_id, input_path, output_path):
-    ffmpeg = _get_ffmpeg()
-    if not ffmpeg:
-        _jobs[job_id] = {"status": "error", "message": "FFmpeg not available on server"}
-        return
-
-    _jobs[job_id] = {"status": "converting", "percent": 10, "step": "STARTING FFMPEG..."}
-
-    # Get duration for progress
-    duration = 0
-    try:
-        probe = subprocess.run(
-            [ffmpeg, "-i", input_path, "-f", "null", "-"],
-            capture_output=True, text=True
-        )
-        for line in probe.stderr.split("\n"):
-            if "Duration" in line:
-                parts = line.strip().split("Duration:")[1].split(",")[0].strip()
-                h, m, s = parts.split(":")
-                duration = float(h)*3600 + float(m)*60 + float(s)
-                break
-    except:
-        pass
-
-    cmd = [
-        ffmpeg, "-y",
-        "-i", input_path,
-        "-vcodec", "wmv2",
-        "-acodec", "wmav2",
-        "-b:v", "4000k",
-        "-b:a", "192k",
-        "-f", "asf",
-        "-progress", "pipe:2",
-        output_path
-    ]
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-
-    for line in proc.stderr:
-        line = line.strip()
-        if line.startswith("out_time_ms="):
-            try:
-                t = int(line.split("=")[1]) / 1_000_000
-                pct = min(95, int(15 + (t / duration) * 80)) if duration > 0 else 50
-                _jobs[job_id] = {"status": "converting", "percent": pct, "step": "CONVERTING TO WMV..."}
-            except:
-                pass
-
-    proc.wait()
-
-    try: os.remove(input_path)
-    except: pass
-
-    if proc.returncode == 0 and os.path.exists(output_path):
-        _jobs[job_id] = {"status": "done", "percent": 100, "output": output_path}
-    else:
-        _jobs[job_id] = {"status": "error", "message": "FFmpeg conversion failed"}
-
-
-@app.route("/convert", methods=["POST", "OPTIONS"])
-def convert_video():
-    if request.method == "OPTIONS":
-        # CORS preflight
-        resp = app.make_default_options_response()
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        return resp
-
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    f = request.files["file"]
-    job_id = uuid.uuid4().hex
-    tmp_dir = tempfile.gettempdir()
-
-    orig_name = f.filename or "video"
-    input_path  = os.path.join(tmp_dir, job_id + "_" + orig_name)
-    output_name = os.path.splitext(orig_name)[0] + ".wmv"
-    output_path = os.path.join(tmp_dir, job_id + "_" + output_name)
-
-    f.save(input_path)
-    _jobs[job_id] = {"status": "queued", "percent": 5, "step": "QUEUED..."}
-
-    import threading
-    threading.Thread(target=_do_convert, args=(job_id, input_path, output_path), daemon=True).start()
-
-    return jsonify({"job_id": job_id})
-
-
-@app.route("/convert_progress/<job_id>")
-def convert_progress(job_id):
-    resp = jsonify(_jobs.get(job_id, {"status": "unknown"}))
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    return resp
-
-
-@app.route("/convert_download/<job_id>")
-def convert_download(job_id):
-    job = _jobs.get(job_id, {})
-    output = job.get("output", "")
-    if job.get("status") != "done" or not os.path.exists(output):
-        return jsonify({"error": "Not ready"}), 404
-
-    from flask import send_file
-    filename = os.path.basename(output).split("_", 1)[-1]  # strip job_id prefix
-
-    resp = send_file(output, mimetype="video/x-ms-wmv", as_attachment=True, download_name=filename)
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-
-    # Clean up after sending
-    @resp.call_on_close
-    def cleanup():
-        try: os.remove(output)
-        except: pass
-        _jobs.pop(job_id, None)
-
-    return resp
