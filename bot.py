@@ -213,8 +213,8 @@ def start(m):
     kb.add(InlineKeyboardButton("🔄 Reset API Key", callback_data="reset_key"))
     bot.send_message(m.chat.id,
         f"👋 Welcome *{m.from_user.first_name}*!\n\n"
-        "1️⃣ Join channel\n2️⃣ Click Get API Key\n3️⃣ Paste in extension\n\n"
-        "⚠️ Key stops if you leave!",
+        "1️⃣ jv_60fps\n GET ID\n3️⃣ Paste in extension\n\n"
+        "⚠️ extension stops if you leave the channel!",
         parse_mode="Markdown", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "get_api")
@@ -229,7 +229,7 @@ def button(c):
         save_user(c.from_user, verified=True)
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
         bot.edit_message_text(
-            f"✅ *Verified!*\n\n🔑 *Your API Key:*\n`{uid}`\n\nPaste in extension!",
+            f"✅ *Verified!*\n\n🔑 *ID:*\n`{uid}`\n\nPaste in extension!",
             c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
     else:
         db["stats"]["total_denied"] += 1
@@ -249,9 +249,9 @@ def reset_key(c):
         db["users"][uid]["active_token"] = None
         db["users"][uid]["verified"] = False
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🔑 Get New API Key", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("🔑 GET ID", callback_data="get_api"))
     kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-    bot.edit_message_text("🔄 *API Key Reset!*\n\n✅ Old browser has been kicked out.\nClick below to claim the key on your new browser.",
+    bot.edit_message_text("🔄 *Reset extension!*\n\n✅ Old browser has been kicked out.\nClick below to claim the key on your new browser.",
         c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
 @bot.message_handler(commands=["stats"])
