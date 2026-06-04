@@ -562,8 +562,24 @@ def admin_settings():
 
 # ── Start ─────────────────────────────────────────────────────────────────────
 def run_bot():
-    print("🤖 Bot polling...")
-    bot.infinity_polling()
+    import time
+    # Delete any existing webhook and drop pending updates to avoid 409 conflict
+    print("🤖 Removing webhook and clearing pending updates...")
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        print(f"⚠️ Could not delete webhook: {e}")
+
+    # Wait a moment to let Telegram close any other polling sessions
+    time.sleep(3)
+
+    print("🤖 Bot polling started...")
+    while True:
+        try:
+            bot.infinity_polling(timeout=30, long_polling_timeout=30)
+        except Exception as e:
+            print(f"⚠️ Polling error: {e} — restarting in 5s...")
+            time.sleep(5)
 
 if __name__ == "__main__":
     threading.Thread(target=run_bot, daemon=True).start()
