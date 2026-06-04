@@ -563,16 +563,7 @@ def admin_settings():
 # ── Start ─────────────────────────────────────────────────────────────────────
 def run_bot():
     import time
-    # Delete any existing webhook and drop pending updates to avoid 409 conflict
-    print("🤖 Removing webhook and clearing pending updates...")
-    try:
-        bot.delete_webhook(drop_pending_updates=True)
-    except Exception as e:
-        print(f"⚠️ Could not delete webhook: {e}")
-
-    # Wait a moment to let Telegram close any other polling sessions
-    time.sleep(3)
-
+    time.sleep(2)
     print("🤖 Bot polling started...")
     while True:
         try:
@@ -582,6 +573,18 @@ def run_bot():
             time.sleep(5)
 
 if __name__ == "__main__":
+    import time, requests as req
+    print("🤖 Removing webhook...")
+    try:
+        req.get(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
+            params={"drop_pending_updates": True},
+            timeout=10
+        )
+        print("✅ Webhook removed.")
+    except Exception as e:
+        print(f"⚠️ Webhook removal failed (continuing): {e}")
+    time.sleep(3)
     threading.Thread(target=run_bot, daemon=True).start()
     print(f"🌐 Server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT)
