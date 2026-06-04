@@ -215,13 +215,13 @@ def start(m):
         return
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-    kb.add(InlineKeyboardButton("🔑 Get My API Key", callback_data="get_api"))
-    kb.add(InlineKeyboardButton("🔄 Reset API Key", callback_data="reset_key"))
+    kb.add(InlineKeyboardButton("🔑 Get ID", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("🔄 Reset Extension", callback_data="reset_key"))
     # FIX #3: Fixed the broken welcome message (missing step 2️⃣)
     bot.send_message(m.chat.id,
         f"👋 Welcome *{m.from_user.first_name}*!\n\n"
         f"1️⃣ Join {CHANNEL_LINK}\n"
-        "2️⃣ Click *Get My API Key* below\n"
+        "2️⃣ Click *Get ID* below\n"
         "3️⃣ Paste your ID in the extension\n\n"
         "⚠️ Extension stops working if you leave the channel!",
         parse_mode="Markdown", reply_markup=kb)
@@ -260,7 +260,7 @@ def reset_key(c):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🔑 Get My ID", callback_data="get_api"))
     kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-    bot.edit_message_text("🔄 *Session Reset!*\n\n✅ Old browser has been kicked out.\nClick below to claim your key on the new browser.",
+    bot.edit_message_text("🔄 *Session Reset!*\n\n✅ extension reset succesful .\nClick below to copy your ID.",
         c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
 @bot.message_handler(commands=["stats"])
