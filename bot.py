@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 import subprocess
 import tempfile
@@ -19,6 +20,11 @@ ADMIN_PASS   = os.environ.get("ADMIN_PASSWORD", "admin123")
 SECRET_KEY   = os.environ.get("SECRET_KEY", "jvsecret999")
 PORT         = int(os.environ.get("PORT", 8080))
 
+# FIX #1: Validate BOT_TOKEN before crashing silently
+if not BOT_TOKEN:
+    print("❌ ERROR: BOT_TOKEN environment variable is not set!", file=sys.stderr)
+    sys.exit(1)
+
 bot = telebot.TeleBot(BOT_TOKEN, skip_pending=True)
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -27,7 +33,7 @@ CORS(app, resources={r"/convert": {"origins": "*"}, r"/convert_progress/*": {"or
 # ── Database ─────────────────────────────────────────────────────────────────
 db = {
     "users": {},
-    "blocked": set(),
+    "blocked": [],   # FIX #2: Use list instead of set (JSON-serializable)
     "broadcast_log": [],
     "stats": {
         "total_starts": 0,
@@ -211,10 +217,13 @@ def start(m):
     kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
     kb.add(InlineKeyboardButton("🔑 Get My API Key", callback_data="get_api"))
     kb.add(InlineKeyboardButton("🔄 Reset API Key", callback_data="reset_key"))
+    # FIX #3: Fixed the broken welcome message (missing step 2️⃣)
     bot.send_message(m.chat.id,
         f"👋 Welcome *{m.from_user.first_name}*!\n\n"
-        "1️⃣ jv_60fps\n GET ID\n3️⃣ Paste in extension\n\n"
-        "⚠️ extension stops if you leave the channel!",
+        f"1️⃣ Join {CHANNEL_LINK}\n"
+        "2️⃣ Click *Get My API Key* below\n"
+        "3️⃣ Paste your ID in the extension\n\n"
+        "⚠️ Extension stops working if you leave the channel!",
         parse_mode="Markdown", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "get_api")
@@ -229,7 +238,7 @@ def button(c):
         save_user(c.from_user, verified=True)
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
         bot.edit_message_text(
-            f"✅ *Verified!*\n\n🔑 *ID:*\n`{uid}`\n\nPaste in extension!",
+            f"✅ *Verified!*\n\n🔑 *Your ID:*\n`{uid}`\n\nPaste this in the extension!",
             c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
     else:
         db["stats"]["total_denied"] += 1
@@ -249,9 +258,9 @@ def reset_key(c):
         db["users"][uid]["active_token"] = None
         db["users"][uid]["verified"] = False
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🔑 GET ID", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("🔑 Get My ID", callback_data="get_api"))
     kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-    bot.edit_message_text("🔄 *Reset extension!*\n\n✅ Old browser has been kicked out.\nClick below to claim the key on your new browser.",
+    bot.edit_message_text("🔄 *Session Reset!*\n\n✅ Old browser has been kicked out.\nClick below to claim your key on the new browser.",
         c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
 @bot.message_handler(commands=["stats"])
@@ -474,7 +483,8 @@ def admin_login():
     if request.form.get("password") == ADMIN_PASS:
         session["admin"] = True
         return redirect("/admin")
-    return render_template_string(ADMIN_HTML, **ctx("dashboard", error="Wrong password!"))
+    # FIX #4: Use "login" page context on failed login, not "dashboard"
+    return render_template_string(ADMIN_HTML, **ctx("login", error="Wrong password!"))
 
 @app.route("/admin/logout")
 def admin_logout():
@@ -489,13 +499,15 @@ def admin_users():
 @app.route("/admin/block/<uid>", methods=["POST"])
 def admin_block(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["blocked"].add(uid)
+    if uid not in db["blocked"]:
+        db["blocked"].append(uid)
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"🚫 User {uid} blocked."))
 
 @app.route("/admin/unblock/<uid>", methods=["POST"])
 def admin_unblock(uid):
     if not session.get("admin"): return redirect("/admin")
-    db["blocked"].discard(uid)
+    if uid in db["blocked"]:
+        db["blocked"].remove(uid)
     return render_template_string(ADMIN_HTML, **ctx("users", flash=f"✅ User {uid} unblocked."))
 
 @app.route("/admin/reset-session/<uid>", methods=["POST"])
@@ -510,14 +522,16 @@ def admin_reset_session(uid):
 def block_manual():
     if not session.get("admin"): return redirect("/admin")
     uid = request.form.get("uid", "").strip()
-    if uid: db["blocked"].add(uid)
+    if uid and uid not in db["blocked"]:
+        db["blocked"].append(uid)
     return render_template_string(ADMIN_HTML, **ctx("settings", flash=f"🚫 User {uid} blocked."))
 
 @app.route("/admin/unblock-manual", methods=["POST"])
 def unblock_manual():
     if not session.get("admin"): return redirect("/admin")
     uid = request.form.get("uid", "").strip()
-    db["blocked"].discard(uid)
+    if uid in db["blocked"]:
+        db["blocked"].remove(uid)
     return render_template_string(ADMIN_HTML, **ctx("settings", flash=f"✅ User {uid} unblocked."))
 
 @app.route("/admin/broadcast", methods=["GET", "POST"])
