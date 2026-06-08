@@ -3,8 +3,8 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = "@jv60fps"
-CHANNEL_LINK = "https://t.me/jv60fps"
+CHANNEL_ID = "@jv_60fps"
+CHANNEL_LINK = "https://t.me/jv_60fps"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
