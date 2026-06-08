@@ -7,8 +7,8 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ── Config ───────────────────────────────────────────────────────────────────
 BOT_TOKEN    = os.environ.get("BOT_TOKEN")
-CHANNEL_ID   = os.environ.get("CHANNEL_ID", "@jv60fps")
-CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/jv60fps")
+CHANNEL_ID   = os.environ.get("CHANNEL_ID", "@jv_60fps")
+CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/jv_60fps")
 ADMIN_ID     = int(os.environ.get("ADMIN_ID", "0"))
 ADMIN_PASS   = os.environ.get("ADMIN_PASSWORD", "admin123")
 SECRET_KEY   = os.environ.get("SECRET_KEY", "jvsecret999")
