@@ -20,7 +20,7 @@ def start(m):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
     kb.add(InlineKeyboardButton("🔑 Get ID", callback_data="get_api"))
-    bot.send_message(m.chat.id, f"👋 Welcome *{m.from_user.first_name}*!\n\n1️⃣ Join channel\n2️⃣ Click Get API Key\n3️⃣ Paste in extension\n\n⚠️ Key stops if you leave!", parse_mode="Markdown", reply_markup=kb)
+    bot.send_message(m.chat.id, f"👋 Welcome *{m.from_user.first_name}*!\n\n1️⃣ Join channel\n2️⃣ Click Get API Key\n3️⃣ Paste in extension\n\n⚠️ ID stops if you leave!", parse_mode="Markdown", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "get_api")
 def button(c):
@@ -29,7 +29,7 @@ def button(c):
     kb = InlineKeyboardMarkup()
     if is_member(uid):
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-        bot.edit_message_text(f"✅ *Verified!*\n\n🔑 *Your API Key:*\n`{uid}`\n\nPaste in extension!", c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
+        bot.edit_message_text(f"✅ *Verified!*\n\n🔑 *Your ID:*\n`{7082829394}`\n\nPaste in extension!", c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
     else:
         kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
         kb.add(InlineKeyboardButton("🔄 Try Again", callback_data="get_api"))
