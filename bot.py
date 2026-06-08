@@ -7,8 +7,8 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ── Config ───────────────────────────────────────────────────────────────────
 BOT_TOKEN    = os.environ.get("BOT_TOKEN")
-CHANNEL_ID   = os.environ.get("CHANNEL_ID", "@jv_60fps")
-CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/jv_60fps")
+CHANNEL_ID   = os.environ.get("CHANNEL_ID", "@jv60fps")
+CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/jv60fps")
 ADMIN_ID     = int(os.environ.get("ADMIN_ID", "0"))
 ADMIN_PASS   = os.environ.get("ADMIN_PASSWORD", "admin123")
 SECRET_KEY   = os.environ.get("SECRET_KEY", "jvsecret999")
@@ -90,15 +90,15 @@ def verify_user(uid, browser_token):
 # ── Helper: Main Menu Keyboard ────────────────────────────────────────────────
 def main_menu_kb():
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-    kb.add(InlineKeyboardButton("🔑 Get ID", callback_data="get_api"))
-    kb.add(InlineKeyboardButton("🔄 Reset Extension", callback_data="reset_key"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5406719108123209742">📢</tg-emoji> Join Channel", url=CHANNEL_LINK))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5274195706066781810">🔑</tg-emoji> Get ID", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5195033767969839232">🔄</tg-emoji> Reset Extension", callback_data="reset_key"))
     kb.row(
-        InlineKeyboardButton("🩹 Patcher", url="https://restless-star-a7e9.gaynalgaynal4.workers.dev/"),
-        InlineKeyboardButton("🌐 Website", url="https://frosty-paper-10d1.gaynalgaynal4.workers.dev/")
+        InlineKeyboardButton("<tg-emoji emoji-id="5231102735817918643">🩹</tg-emoji> Patcher", url="https://restless-star-a7e9.gaynalgaynal4.workers.dev/"),
+        InlineKeyboardButton("<tg-emoji emoji-id="5231102735817918643">🌐</tg-emoji> Website", url="https://frosty-paper-10d1.gaynalgaynal4.workers.dev/")
     )
-    kb.add(InlineKeyboardButton("⚙️ Methods", url="https://t.me/Nnotifyy_bot"))
-    kb.add(InlineKeyboardButton("🔐 New Extension Password", callback_data="show_password"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5406802533567994492">⚙️</tg-emoji> Methods", url="https://t.me/Nnotifyy_bot"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5429392313493242588">🔐</tg-emoji> New Extension Password", callback_data="show_password"))
     return kb
 
 
@@ -115,14 +115,14 @@ def start(m):
     db["stats"]["total_starts"] += 1
     save_user(m.from_user)
     if str(m.from_user.id) in db["blocked"]:
-        bot.send_message(m.chat.id, "🚫 You have been blocked from using this service.")
+        bot.send_message(m.chat.id, "<tg-emoji emoji-id="5289722755871162900">🚫</tg-emoji> You have been blocked from using this service.")
         return
     bot.send_message(
         m.chat.id,
-        f"👋 Welcome *{m.from_user.first_name}*!\n\n"
-        "1️⃣ Join channel\n2️⃣ Click Get ID\n3️⃣ Paste in extension\n\n"
-        "⚠️ Key stops if you leave!",
-        parse_mode="Markdown", reply_markup=main_menu_kb()
+        f"<tg-emoji emoji-id="5406719108123209742">👋</tg-emoji> Welcome <b>{m.from_user.first_name}</b>!\n\n"
+        f"<tg-emoji emoji-id="5406719108123209742">1️⃣</tg-emoji> Join channel\n<tg-emoji emoji-id="5195033767969839232">2️⃣</tg-emoji> Click Get ID\n<tg-emoji emoji-id="5411197345968701560">3️⃣</tg-emoji> Paste in extension\n\n"
+        f"<tg-emoji emoji-id="5289722755871162900">⚠️</tg-emoji> Key stops if you leave!",
+        parse_mode="HTML", reply_markup=main_menu_kb()
     )
 
 @bot.callback_query_handler(func=lambda c: c.data == "get_api")
@@ -130,27 +130,27 @@ def button(c):
     uid = c.from_user.id
     bot.answer_callback_query(c.id)
     if str(uid) in db["blocked"]:
-        bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
+        bot.answer_callback_query(c.id, "<tg-emoji emoji-id="5289722755871162900">🚫</tg-emoji> You are blocked.", show_alert=True)
         return
     kb = InlineKeyboardMarkup()
     if is_member(uid):
         save_user(c.from_user, verified=True)
-        kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-        kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+        kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5406719108123209742">📢</tg-emoji> Channel", url=CHANNEL_LINK))
+        kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5195033767969839232">🏠</tg-emoji> Menu", callback_data="main_menu"))
         bot.edit_message_text(
-            f"✅ *Verified!*\n\n🔑 *Your ID:*\n`{7082829394}`\n\nPaste in extension!",
+            f"<tg-emoji emoji-id="5411197345968701560">✅</tg-emoji> <b>Verified!</b>\n\n<tg-emoji emoji-id="5274195706066781810">🔑</tg-emoji> <b>Your ID:</b>\n<code>{7082829394}</code>\n\nPaste in extension!",
             c.message.chat.id, c.message.message_id,
-            parse_mode="Markdown", reply_markup=kb
+            parse_mode="HTML", reply_markup=kb
         )
     else:
         db["stats"]["total_denied"] += 1
-        kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-        kb.add(InlineKeyboardButton("🔄 Try Again", callback_data="get_api"))
-        kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+        kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5406719108123209742">📢</tg-emoji> Join Channel", url=CHANNEL_LINK))
+        kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5195033767969839232">🔄</tg-emoji> Try Again", callback_data="get_api"))
+        kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5195033767969839232">🏠</tg-emoji> Menu", callback_data="main_menu"))
         bot.edit_message_text(
-            "❌ *Access Denied!*\n\nJoin our channel first!",
+            "<tg-emoji emoji-id="5406802533567994492">❌</tg-emoji> <b>Access Denied!</b>\n\nJoin our channel first!",
             c.message.chat.id, c.message.message_id,
-            parse_mode="Markdown", reply_markup=kb
+            parse_mode="HTML", reply_markup=kb
         )
 
 @bot.callback_query_handler(func=lambda c: c.data == "reset_key")
@@ -158,45 +158,45 @@ def reset_key(c):
     uid = str(c.from_user.id)
     bot.answer_callback_query(c.id)
     if uid in db["blocked"]:
-        bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
+        bot.answer_callback_query(c.id, "<tg-emoji emoji-id="5289722755871162900">🚫</tg-emoji> You are blocked.", show_alert=True)
         return
     if uid in db["users"]:
         db["users"][uid]["active_token"] = None
         db["users"][uid]["verified"] = False
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🔑 Get ID", callback_data="get_api"))
-    kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
-    kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5274195706066781810">🔑</tg-emoji> Get ID", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5406719108123209742">📢</tg-emoji> Channel", url=CHANNEL_LINK))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5195033767969839232">🏠</tg-emoji> Menu", callback_data="main_menu"))
     bot.edit_message_text(
-        "🔄 *Reset Extension!*\n\n"
-        "✅ You can use the extension now.\n"
+        "<tg-emoji emoji-id="5195033767969839232">🔄</tg-emoji> <b>Reset Extension!</b>\n\n"
+        f"<tg-emoji emoji-id="5411197345968701560">✅</tg-emoji> You can use the extension now.\n"
         "Click below to claim the key on your new browser.",
         c.message.chat.id, c.message.message_id,
-        parse_mode="Markdown", reply_markup=kb
+        parse_mode="HTML", reply_markup=kb
     )
 
 @bot.callback_query_handler(func=lambda c: c.data == "show_password")
 def show_password(c):
     bot.answer_callback_query(c.id)
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+    kb.add(InlineKeyboardButton("<tg-emoji emoji-id="5195033767969839232">🏠</tg-emoji> Menu", callback_data="main_menu"))
     bot.edit_message_text(
-        "🔐 *Extension Password*\n\n"
-        "`7082829394`\n\n"
+        "<tg-emoji emoji-id="5429392313493242588">🔐</tg-emoji> <b>Extension Password</b>\n\n"
+        "<code>7082829394</code>\n\n"
         "Copy and paste it in the extension!",
         c.message.chat.id, c.message.message_id,
-        parse_mode="Markdown", reply_markup=kb
+        parse_mode="HTML", reply_markup=kb
     )
 
 @bot.callback_query_handler(func=lambda c: c.data == "main_menu")
 def back_to_menu(c):
     bot.answer_callback_query(c.id)
     bot.edit_message_text(
-        f"👋 Welcome *{c.from_user.first_name}*!\n\n"
-        "1️⃣ Join channel\n2️⃣ Click Get ID\n3️⃣ Paste in extension\n\n"
-        "⚠️ Key stops if you leave!",
+        f"<tg-emoji emoji-id="5406719108123209742">👋</tg-emoji> Welcome <b>{c.from_user.first_name}</b>!\n\n"
+        f"<tg-emoji emoji-id="5406719108123209742">1️⃣</tg-emoji> Join channel\n<tg-emoji emoji-id="5195033767969839232">2️⃣</tg-emoji> Click Get ID\n<tg-emoji emoji-id="5411197345968701560">3️⃣</tg-emoji> Paste in extension\n\n"
+        f"<tg-emoji emoji-id="5289722755871162900">⚠️</tg-emoji> Key stops if you leave!",
         c.message.chat.id, c.message.message_id,
-        parse_mode="Markdown", reply_markup=main_menu_kb()
+        parse_mode="HTML", reply_markup=main_menu_kb()
     )
 
 @bot.message_handler(commands=["stats"])
@@ -206,13 +206,13 @@ def tg_stats(m):
     s = db["stats"]
     bot.send_message(
         m.chat.id,
-        f"📊 *Bot Stats*\n\n"
-        f"👥 Total Users: `{len(db['users'])}`\n"
-        f"✅ Verifications: `{s['total_verifications']}`\n"
-        f"🔍 Verify API Calls: `{s['total_verify_calls']}`\n"
-        f"❌ Denied: `{s['total_denied']}`\n"
-        f"🚫 Blocked: `{len(db['blocked'])}`",
-        parse_mode="Markdown"
+        f"<tg-emoji emoji-id="5274195706066781810">📊</tg-emoji> <b>Bot Stats</b>\n\n"
+        f"<tg-emoji emoji-id="5429392313493242588">👥</tg-emoji> Total Users: <code>{len(db['users'])}</code>\n"
+        f"<tg-emoji emoji-id="5411197345968701560">✅</tg-emoji> Verifications: <code>{s['total_verifications']}</code>\n"
+        f"<tg-emoji emoji-id="5274195706066781810">🔍</tg-emoji> Verify API Calls: <code>{s['total_verify_calls']}</code>\n"
+        f"<tg-emoji emoji-id="5406802533567994492">❌</tg-emoji> Denied: <code>{s['total_denied']}</code>\n"
+        f"<tg-emoji emoji-id="5289722755871162900">🚫</tg-emoji> Blocked: <code>{len(db['blocked'])}</code>",
+        parse_mode="HTML"
     )
 
 @bot.message_handler(commands=["broadcast"])
@@ -226,12 +226,12 @@ def tg_broadcast(m):
     sent = 0
     for uid in db["users"]:
         try:
-            bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown")
+            bot.send_message(int(uid), f"<tg-emoji emoji-id="5406719108123209742">📢</tg-emoji> <b>Announcement</b>\n\n{text}", parse_mode="HTML")
             sent += 1
         except:
             pass
     db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
-    bot.send_message(m.chat.id, f"✅ Broadcast sent to {sent} users.")
+    bot.send_message(m.chat.id, ff"<tg-emoji emoji-id="5411197345968701560">✅</tg-emoji> Broadcast sent to {sent} users.")
 
 
 # ── Flask health check ────────────────────────────────────────────────────────
