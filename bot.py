@@ -1,5 +1,7 @@
 import os
+import threading
 import telebot
+from flask import Flask
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -7,6 +9,11 @@ CHANNEL_ID = "@jv_60fps"
 CHANNEL_LINK = "https://t.me/jv_60fps"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
 
 def is_member(uid):
     try:
@@ -35,5 +42,11 @@ def button(c):
         kb.add(InlineKeyboardButton("🔄 Try Again", callback_data="get_api"))
         bot.edit_message_text("❌ *Access Denied!*\n\nJoin our channel first!", c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb)
 
-print("🤖 Bot is running!")
-bot.infinity_polling()
+def run_bot():
+    bot.remove_webhook()
+    bot.infinity_polling()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_bot, daemon=True).start()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
