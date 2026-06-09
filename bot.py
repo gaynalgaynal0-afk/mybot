@@ -82,7 +82,16 @@ def verify_user(uid, browser_token):
         save_user(user, verified=True)
         db["stats"]["total_verifications"] += 1
         username = "@" + user.username if user.username else user.first_name
-        return jsonify({"allowed": True, "username": username})
+        photo_url = None
+        try:
+            photos = bot.get_user_profile_photos(int(uid), limit=1)
+            if photos.total_count > 0:
+                file_id = photos.photos[0][-1].file_id
+                file_info = bot.get_file(file_id)
+                photo_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+        except:
+            pass
+        return jsonify({"allowed": True, "username": username, "first_name": user.first_name or "", "photo_url": photo_url})
     except:
         return jsonify({"allowed": True, "username": "User"})
 
