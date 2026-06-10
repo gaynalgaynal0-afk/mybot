@@ -147,7 +147,7 @@ def button(c):
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
         kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
         bot.edit_message_text(
-            f"✅ *Verified!*\n\n🔑 *Your ID:*\n`{7082829394}`\n\nPaste in extension!",
+            f"✅ *Verified!*\n\n🔑 *Your ID:*\n`{uid}`\n\nPaste in extension!",
             c.message.chat.id, c.message.message_id,
             parse_mode="Markdown", reply_markup=kb
         )
