@@ -147,7 +147,7 @@ def button(c):
         kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
         kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
         bot.edit_message_text(
-            f"✅ *Verified!*\n\n🔑 *Your ID:*\n`{uid}`\n\nPaste in extension!",
+            f" *ID:*`{uid},
             c.message.chat.id, c.message.message_id,
             parse_mode="Markdown", reply_markup=kb
         )
@@ -178,8 +178,7 @@ def reset_key(c):
     kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
     bot.edit_message_text(
         "🔄 *Reset Extension!*\n\n"
-        "✅ You can use the extension now.\n"
-        "Click below to claim the key on your new browser.",
+        "✅ You can use the extension now.\n",
         c.message.chat.id, c.message.message_id,
         parse_mode="Markdown", reply_markup=kb
     )
@@ -190,8 +189,8 @@ def show_password(c):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
     bot.edit_message_text(
-        "🔐 *Extension Password*\n\n"
-        "`7082829394`\n\n"
+        "🔐 *google colabe \n & Extension Password*"
+        "extension:`7082829394`\n\n google colabe:`JV`"
         "Copy and paste it in the extension!",
         c.message.chat.id, c.message.message_id,
         parse_mode="Markdown", reply_markup=kb
