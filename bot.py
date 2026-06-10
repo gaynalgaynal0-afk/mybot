@@ -1,4 +1,4 @@
-import os
+mport os
 import threading
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, session, jsonify
@@ -106,6 +106,157 @@ def main_menu_kb():
         InlineKeyboardButton("🩹 Patcher", url="https://restless-star-a7e9.gaynalgaynal4.workers.dev/"),
         InlineKeyboardButton("🌐 Website", url="https://frosty-paper-10d1.gaynalgaynal4.workers.dev/")
     )
+    kb.add(InlineKeyboardButton("⚙️ Methods", url="https://t.me/Nnotifyy_bot"))
+    kb.add(InlineKeyboardButton("🔐 New Extension Password", callback_data="show_password"))
+    return kb
+
+
+# ── Telegram Bot Handlers ─────────────────────────────────────────────────────
+def is_member(uid):
+    try:
+        m = bot.get_chat_member(CHANNEL_ID, uid)
+        return m.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+@bot.message_handler(commands=["start", "help"])
+def start(m):
+    db["stats"]["total_starts"] += 1
+    save_user(m.from_user)
+    if str(m.from_user.id) in db["blocked"]:
+        bot.send_message(m.chat.id, "🚫 You have been blocked from using this service.")
+        return
+    bot.send_message(
+        m.chat.id,
+        f"👋 Welcome *{m.from_user.first_name}*!\n\n"
+        "1️⃣ Join channel\n2️⃣ Click Get ID\n3️⃣ Paste in extension\n\n"
+        "⚠️ Key stops if you leave!",
+        parse_mode="Markdown", reply_markup=main_menu_kb()
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data == "get_api")
+def button(c):
+    uid = c.from_user.id
+    bot.answer_callback_query(c.id)
+    if str(uid) in db["blocked"]:
+        bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup()
+    if is_member(uid):
+        save_user(c.from_user, verified=True)
+        kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
+        kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+        bot.edit_message_text(
+            f"✅ *Verified!*\n\n🔑 *Your ID:*\`{uid}`\",
+            c.message.chat.id, c.message.message_id,
+            parse_mode="Markdown", reply_markup=kb
+        )
+    else:
+        db["stats"]["total_denied"] += 1
+        kb.add(InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
+        kb.add(InlineKeyboardButton("🔄 Try Again", callback_data="get_api"))
+        kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+        bot.edit_message_text(
+            "❌ *Access Denied!*\n\nJoin our channel first!",
+            c.message.chat.id, c.message.message_id,
+            parse_mode="Markdown", reply_markup=kb
+        )
+
+@bot.callback_query_handler(func=lambda c: c.data == "reset_key")
+def reset_key(c):
+    uid = str(c.from_user.id)
+    bot.answer_callback_query(c.id)
+    if uid in db["blocked"]:
+        bot.answer_callback_query(c.id, "🚫 You are blocked.", show_alert=True)
+        return
+    if uid in db["users"]:
+        db["users"][uid]["active_token"] = None
+        db["users"][uid]["verified"] = False
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔑 Get ID", callback_data="get_api"))
+    kb.add(InlineKeyboardButton("📢 Channel", url=CHANNEL_LINK))
+    kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+    bot.edit_message_text(
+        "🔄 *Reset Extension!*\n\n"
+        "✅ You can use the extension now.\n"
+        "Click below to claim the key on your new browser.",
+        c.message.chat.id, c.message.message_id,
+        parse_mode="Markdown", reply_markup=kb
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data == "show_password")
+def show_password(c):
+    bot.answer_callback_query(c.id)
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
+    bot.edit_message_text(
+        "🔐 *Extension Password*\n\n"
+        "`7082829394`\n\n"
+        "Copy and paste it in the extension!",
+        c.message.chat.id, c.message.message_id,
+        parse_mode="Markdown", reply_markup=kb
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data == "main_menu")
+def back_to_menu(c):
+    bot.answer_callback_query(c.id)
+    bot.edit_message_text(
+        f"👋 Welcome *{c.from_user.first_name}*!\n\n"
+        "1️⃣ Join channel\n2️⃣ Click Get ID\n3️⃣ Paste in extension\n\n"
+        "⚠️ Key stops if you leave!",
+        c.message.chat.id, c.message.message_id,
+        parse_mode="Markdown", reply_markup=main_menu_kb()
+    )
+
+@bot.message_handler(commands=["stats"])
+def tg_stats(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    s = db["stats"]
+    bot.send_message(
+        m.chat.id,
+        f"📊 *Bot Stats*\n\n"
+        f"👥 Total Users: `{len(db['users'])}`\n"
+        f"✅ Verifications: `{s['total_verifications']}`\n"
+        f"🔍 Verify API Calls: `{s['total_verify_calls']}`\n"
+        f"❌ Denied: `{s['total_denied']}`\n"
+        f"🚫 Blocked: `{len(db['blocked'])}`",
+        parse_mode="Markdown"
+    )
+
+@bot.message_handler(commands=["broadcast"])
+def tg_broadcast(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    text = m.text.replace("/broadcast", "").strip()
+    if not text:
+        bot.send_message(m.chat.id, "Usage: /broadcast <message>")
+        return
+    sent = 0
+    for uid in db["users"]:
+        try:
+            bot.send_message(int(uid), f"📢 *Announcement*\n\n{text}", parse_mode="Markdown")
+            sent += 1
+        except:
+            pass
+    db["broadcast_log"].append({"text": text, "sent_to": sent, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
+    bot.send_message(m.chat.id, f"✅ Broadcast sent to {sent} users.")
+
+
+# ── Flask health check ────────────────────────────────────────────────────────
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+def run_bot():
+    bot.remove_webhook()
+    bot.infinity_polling()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_bot, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT)    )
     kb.add(InlineKeyboardButton("⚙️ Methods", url="https://t.me/Nnotifyy_bot"))
     kb.add(InlineKeyboardButton("🔐 New Extension Password", callback_data="show_password"))
     return kb
