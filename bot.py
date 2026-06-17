@@ -107,7 +107,7 @@ def main_menu_kb():
         InlineKeyboardButton("🌐 Website", url="https://frosty-paper-10d1.gaynalgaynal4.workers.dev/")
     )
     kb.add(InlineKeyboardButton("⚙️ Methods", url="https://t.me/Nnotifyy_bot"))
-    kb.add(InlineKeyboardButton("🔐 New Extension Password", callback_data="show_password"))
+    kb.add(InlineKeyboardButton("🔐 ALL Google colabe passwords", callback_data="show_password"))
     return kb
 
 
@@ -190,7 +190,7 @@ def show_password(c):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🏠 Menu", callback_data="main_menu"))
     bot.edit_message_text(
-        "🔐 *Extension Password*\n\n"
+        "🔐 *ALL Google colabe password*\n\n"
         "`7082829394`\n\n"
         "Copy and paste it in the extension!",
         c.message.chat.id, c.message.message_id,
