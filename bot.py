@@ -192,7 +192,7 @@ def show_password(c):
     bot.edit_message_text(
         "🔐 *ALL Google colabe password*\n\n"
         "`7082829394`\n\n"
-        "Copy and paste it in the extension!",
+        "Copy and paste it in google colabe",
         c.message.chat.id, c.message.message_id,
         parse_mode="Markdown", reply_markup=kb
     )
