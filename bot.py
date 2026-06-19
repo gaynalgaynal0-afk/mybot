@@ -106,7 +106,7 @@ def main_menu_kb():
         InlineKeyboardButton("🩹 Patcher", url="https://restless-star-a7e9.gaynalgaynal4.workers.dev/"),
         InlineKeyboardButton("🌐 Website", url="https://frosty-paper-10d1.gaynalgaynal4.workers.dev/")
     )
-    kb.add(InlineKeyboardButton("⚙️ Methods", url="https://t.me/Nnotifyy_bot"))
+    kb.add(InlineKeyboardButton("🔗 all Google colabe ", url="https://t.me/Nnotifyy_bot"))
     kb.add(InlineKeyboardButton("🔐 ALL Google colabe passwords", callback_data="show_password"))
     return kb
 
