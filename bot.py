@@ -2,6 +2,7 @@ import os
 import threading
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, session, jsonify
+from flask_cors import CORS
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -17,6 +18,10 @@ PORT         = int(os.environ.get("PORT", 8080))
 bot = telebot.TeleBot(BOT_TOKEN, skip_pending=True)
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+# Allow only the JV-60FPS Netlify site to call the verification API.
+# This does not change the bot logic or Telegram handlers.
+CORS(app, resources={r"/verify/*": {"origins": "https://jv60fps.netlify.app"}})
 
 # ── Database ─────────────────────────────────────────────────────────────────
 db = {
